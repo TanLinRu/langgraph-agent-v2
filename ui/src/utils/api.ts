@@ -10,74 +10,46 @@ export interface ChatMessage {
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 /**
- * Stream chat via EventSource (GET /chat/stream).
- * EventSource is the browser's native SSE client — no buffering, real-time events.
+ * Stream chat via EventSource with callbacks — no async generator bottleneck.
+ * Each event fires the callback immediately, letting Vue update the DOM in real-time.
  */
-export function streamChat(message: string, sessionId?: string): AsyncGenerator<Record<string, unknown>> {
+export function streamChatCallbacks(
+  message: string,
+  onEvent: (event: Record<string, unknown>) => void,
+  onDone: () => void,
+  sessionId?: string,
+): EventSource {
   const params = new URLSearchParams({ message })
   if (sessionId) params.set('session_id', sessionId)
   const url = `${API_BASE}/chat/stream?${params.toString()}`
 
-  console.log(`[SSE-TRACE] streamChat: EventSource → ${url}`)
+  console.log(`[SSE-TRACE] streamChatCallbacks: EventSource → ${url}`)
   const t0 = performance.now()
 
   const es = new EventSource(url)
-  const queue: Array<{ value: Record<string, unknown>; done: boolean }> = []
-  let resolveWaiter: (() => void) | null = null
-  let closed = false
-
-  function enqueue(value: Record<string, unknown>, done = false) {
-    if (closed) return
-    queue.push({ value, done })
-    if (resolveWaiter) {
-      resolveWaiter()
-      resolveWaiter = null
-    }
-  }
 
   const eventTypes = ['thinking_start', 'thinking', 'thinking_done', 'tool_call', 'message', 'summary', 'error']
   for (const type of eventTypes) {
     es.addEventListener(type, (e) => {
       const data = JSON.parse((e as MessageEvent).data)
-      console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms streamChat: ${type}`)
-      enqueue(data)
+      console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms SSE: ${type}`)
+      onEvent(data)
     })
   }
 
   es.addEventListener('done', () => {
-    console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms streamChat: done`)
+    console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms SSE: done`)
     es.close()
-    closed = true
-    enqueue({ type: 'done' }, true)
+    onDone()
   })
 
   es.onerror = () => {
-    if (!closed) {
-      console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms streamChat: error, closing`)
-      es.close()
-      closed = true
-      enqueue({ type: 'done' }, true)
-    }
+    console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms SSE: error`)
+    es.close()
+    onDone()
   }
 
-  return {
-    [Symbol.asyncIterator]() { return this },
-    async next() {
-      if (queue.length > 0) {
-        const item = queue.shift()!
-        return { value: item.value, done: item.done }
-      }
-      if (closed) return { value: { type: 'done' }, done: true }
-      await new Promise<void>((r) => { resolveWaiter = r })
-      if (queue.length > 0) {
-        const item = queue.shift()!
-        return { value: item.value, done: item.done }
-      }
-      return { value: { type: 'done' }, done: true }
-    },
-    return() { es.close(); closed = true; return Promise.resolve({ value: undefined, done: true }) },
-    throw(e) { es.close(); closed = true; return Promise.reject(e) },
-  }
+  return es
 }
 
 /**
@@ -111,7 +83,7 @@ export async function* streamChatFetch(message: string, sessionId?: string): Asy
         try {
           const event = JSON.parse(line.slice(6))
           eventIdx++
-          console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms streamChatFetch: #${eventIdx} ${event.type}`)
+          console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms fetch: #${eventIdx} ${event.type}`)
           yield event
         } catch {}
       }

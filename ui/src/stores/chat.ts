@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { streamChat, streamOrchestrate, type ChatMessage } from '../utils/api'
+import { streamChatCallbacks, streamOrchestrate, type ChatMessage } from '../utils/api'
 
 export const useChatStore = defineStore('chat', () => {
   const messages = ref<ChatMessage[]>([])
@@ -10,20 +10,8 @@ export const useChatStore = defineStore('chat', () => {
 
   // Typewriter state per message index
   const typewriterState = ref<Record<number, { display: string; full: string; done: boolean }>>({})
-  const thinkingState = ref<Record<number, { display: string; full: string; done: boolean }>>({})
 
   let _typeTimer: ReturnType<typeof setInterval> | null = null
-  let _thinkTimer: ReturnType<typeof setInterval> | null = null
-
-  function _agentColor(name?: string): string {
-    const colors: Record<string, string> = {
-      supervisor: '#818cf8',
-      coder: '#34d399',
-      researcher: '#fbbf24',
-      analyst: '#fb7185',
-    }
-    return colors[name || ''] || 'rgba(255,255,255,0.5)'
-  }
 
   function _startTypewriter() {
     if (_typeTimer) return
@@ -33,10 +21,8 @@ export const useChatStore = defineStore('chat', () => {
         if (state.done) continue
         const idx = Number(key)
         if (state.display.length < state.full.length) {
-          // Reveal 3 chars at a time for faster animation
           const next = Math.min(state.display.length + 3, state.full.length)
           state.display = state.full.slice(0, next)
-          // Also update the message content for Vue reactivity
           if (messages.value[idx]) {
             messages.value[idx].content = state.display
           }
@@ -52,35 +38,14 @@ export const useChatStore = defineStore('chat', () => {
     }, 20)
   }
 
-  function _startThinkingAnimation() {
-    if (_thinkTimer) return
-    _thinkTimer = setInterval(() => {
-      let hasMore = false
-      for (const [key, state] of Object.entries(thinkingState.value)) {
-        if (state.done) continue
-        const idx = Number(key)
-        if (state.display.length < state.full.length) {
-          // Reveal 5 chars at a time for thinking (faster since thinking is long)
-          const next = Math.min(state.display.length + 5, state.full.length)
-          state.display = state.full.slice(0, next)
-          if (messages.value[idx]) {
-            messages.value[idx].thinking = state.display
-          }
-          hasMore = true
-        } else {
-          state.done = true
-        }
-      }
-      if (!hasMore && _thinkTimer) {
-        clearInterval(_thinkTimer)
-        _thinkTimer = null
-      }
-    }, 15)
-  }
-
-  async function sendMessage(content: string) {
+  /**
+   * Send message using EventSource callbacks — no async generator.
+   * Each SSE event directly mutates the Vue store, triggering immediate DOM updates.
+   */
+  function sendMessage(content: string) {
     messages.value.push({ role: 'user', content })
     isLoading.value = true
+    streamingActive.value = true
 
     let thinkingContent = ''
     let assistantMsg: ChatMessage | null = null
@@ -91,7 +56,6 @@ export const useChatStore = defineStore('chat', () => {
         assistantMsg = { role: 'assistant', content: '', agentName }
         messages.value.push(assistantMsg)
         msgIdx = messages.value.length - 1
-        streamingActive.value = true
       }
       if (agentName && !assistantMsg.agentName) {
         assistantMsg.agentName = agentName
@@ -99,8 +63,10 @@ export const useChatStore = defineStore('chat', () => {
       return assistantMsg
     }
 
-    try {
-      for await (const event of streamChat(content, sessionId.value || undefined)) {
+    streamChatCallbacks(
+      content,
+      // onEvent — called immediately for each SSE event
+      (event) => {
         if (event.session_id) {
           sessionId.value = event.session_id as string
         }
@@ -113,28 +79,17 @@ export const useChatStore = defineStore('chat', () => {
         } else if (event.type === 'thinking') {
           thinkingContent += event.data as string
           const msg = ensureAssistantMsg(agentName)
-          // Live update thinking — no typewriter, just append
           msg.thinking = thinkingContent
-          // Keep thinking expanded
-          if (msgIdx >= 0) {
-            thinkingState.value[msgIdx] = { display: thinkingContent, full: thinkingContent, done: false }
-          }
         } else if (event.type === 'thinking_done') {
-          // Mark thinking as done
-          if (msgIdx >= 0 && thinkingState.value[msgIdx]) {
-            thinkingState.value[msgIdx].done = true
-            // Ensure full content is displayed
-            const msg = ensureAssistantMsg()
-            msg.thinking = thinkingContent
-          }
+          // no-op, thinking content already displayed
         } else if (event.type === 'tool_call') {
           const msg = ensureAssistantMsg(agentName)
           msg.toolCalls = event.data as Array<{ name: string; args: Record<string, unknown> }>
         } else if (event.type === 'message') {
           const msg = ensureAssistantMsg(agentName)
           const fullContent = event.data as string
-          // Start typewriter animation for the message
           if (msgIdx >= 0 && fullContent) {
+            // Typewriter animation for final message
             typewriterState.value[msgIdx] = { display: '', full: fullContent, done: false }
             msg.content = ''
             _startTypewriter()
@@ -153,13 +108,14 @@ export const useChatStore = defineStore('chat', () => {
         } else if (event.type === 'error') {
           messages.value.push({ role: 'system', content: `Error: ${event.data}` })
         }
-      }
-    } catch (e: any) {
-      messages.value.push({ role: 'system', content: `Connection error: ${e.message}` })
-    } finally {
-      isLoading.value = false
-      streamingActive.value = false
-    }
+      },
+      // onDone — called when stream ends or errors
+      () => {
+        isLoading.value = false
+        streamingActive.value = false
+      },
+      sessionId.value || undefined,
+    )
   }
 
   async function sendOrchestrate(task: string) {
@@ -226,14 +182,12 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     sessionId.value = null
     typewriterState.value = {}
-    thinkingState.value = {}
     if (_typeTimer) { clearInterval(_typeTimer); _typeTimer = null }
-    if (_thinkTimer) { clearInterval(_thinkTimer); _thinkTimer = null }
   }
 
   return {
     messages, isLoading, streamingActive, sessionId,
-    typewriterState, thinkingState,
+    typewriterState,
     sendMessage, sendOrchestrate, clearMessages,
   }
 })
