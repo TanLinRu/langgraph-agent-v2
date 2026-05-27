@@ -80,6 +80,11 @@ const messagesRef = ref<HTMLElement | null>(null)
 const thinkingExpanded = ref<Set<number>>(new Set())
 const thinkingLive = ref<Set<number>>(new Set())
 
+function isTyping(i: number): boolean {
+  const state = chat.typewriterState[i]
+  return state ? !state.done : false
+}
+
 function formatArgs(args: Record<string, unknown>): string {
   const entries = Object.entries(args)
   if (entries.length === 0) return ''
@@ -163,7 +168,9 @@ watch(() => chat.messages.length, async () => {
         </div>
 
         <!-- Message content -->
-        <div class="msg-content md-body" v-if="msg.content" v-html="renderMd(msg.content)"></div>
+        <div class="msg-content md-body" v-if="msg.content || isTyping(i)">
+          <span v-html="renderMd(msg.content)"></span><span v-if="isTyping(i)" class="cursor-blink typing-cursor">|</span>
+        </div>
 
         <!-- Tool calls -->
         <div v-if="msg.toolCalls?.length" class="tool-calls">
@@ -305,6 +312,12 @@ watch(() => chat.messages.length, async () => {
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.88);
   animation: contentFadeIn 0.4s ease-out;
+}
+
+.typing-cursor {
+  color: #818cf8;
+  font-weight: bold;
+  margin-left: 1px;
 }
 
 @keyframes contentFadeIn {

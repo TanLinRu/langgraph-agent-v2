@@ -1,14 +1,17 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 
 from src.agent.agent import Agent
 from src.agent.checkpoint import create_session, delete_session, list_sessions as db_list_sessions, load_history, save_turn
@@ -93,16 +96,55 @@ async def chat(request: ChatRequest):
 
     async def stream():
         assistant_content = ""
+        _sse_idx = 0
         async for event in get_agent().run(request.message, memory_context, history):
             event["session_id"] = session_id
+            _sse_idx += 1
             if event["type"] == "message":
                 assistant_content = event["data"]
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            logger.info("[SSE-TRACE] %s server yielding #%d: type=%s bytes=%d", f"{time.time():.3f}", _sse_idx, event["type"], len(payload))
+            yield payload
+            await asyncio.sleep(0)  # yield control to flush SSE chunk
 
         if assistant_content:
             save_turn(session_id, request.message, assistant_content)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.get("/chat/stream")
+async def chat_stream(message: str = Query(...), session_id: str | None = Query(None)):
+    """GET-based SSE endpoint using EventSourceResponse for proper browser streaming."""
+    sid = session_id or create_session()
+    memory_context = get_memory().inject_context(message)
+    history = load_history(sid)
+
+    async def event_generator():
+        assistant_content = ""
+        _sse_idx = 0
+        async for event in get_agent().run(message, memory_context, history):
+            event["session_id"] = sid
+            _sse_idx += 1
+            if event["type"] == "message":
+                assistant_content = event["data"]
+            logger.info("[SSE-TRACE] %s GET-stream yielding #%d: type=%s", f"{time.time():.3f}", _sse_idx, event["type"])
+            yield {"event": event["type"], "data": json.dumps(event, ensure_ascii=False)}
+
+        if assistant_content:
+            save_turn(sid, message, assistant_content)
+
+        yield {"event": "done", "data": json.dumps({"type": "done", "session_id": sid}, ensure_ascii=False)}
+
+    return EventSourceResponse(event_generator())
 
 
 # ── Multi-Agent Orchestration ───────────────────────────────────
@@ -139,11 +181,20 @@ async def orchestrate(request: OrchestrateRequest):
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
             yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── SSE Events ──────────────────────────────────────────────────
@@ -162,7 +213,15 @@ async def sse_stream(stream_id: str):
         finally:
             event_bus.unsubscribe(stream_id, queue)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Sessions ────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/chat': 'http://localhost:8000',
+      // Non-streaming endpoints still go through proxy
       '/api': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },

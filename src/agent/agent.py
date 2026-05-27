@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -15,6 +16,11 @@ from src.agent.models import resolve_model
 from src.agent.tools import TOOLS
 
 logger = logging.getLogger(__name__)
+
+
+def _ts() -> str:
+    """Millisecond-precision timestamp for SSE tracing."""
+    return f"{time.time():.3f}"
 
 
 class Agent:
@@ -147,8 +153,12 @@ class Agent:
         thinking_started = False
         content_parts: list[str] = []
         tool_calls_map: dict[int, dict] = {}
+        _chunk_count = 0
+        _event_count = 0
+        _t0 = time.time()
 
         async for chunk in stream:
+            _chunk_count += 1
             delta = chunk.choices[0].delta if chunk.choices else None
             if not delta:
                 continue
@@ -158,7 +168,10 @@ class Agent:
                 if not thinking_started:
                     yield {"type": "thinking_start"}
                     thinking_started = True
+                    _event_count += 1
+                    logger.info("[SSE-TRACE] %s thinking_start emitted (chunk #%d)", _ts(), _chunk_count)
                 yield {"type": "thinking", "data": reasoning}
+                _event_count += 1
 
             if delta.content:
                 content_parts.append(delta.content)
@@ -179,6 +192,12 @@ class Agent:
 
         if thinking_started:
             yield {"type": "thinking_done"}
+
+        _elapsed = time.time() - _t0
+        logger.info(
+            "[SSE-TRACE] %s stream_raw done: %d chunks, %d events, %.2fs elapsed, content_len=%d",
+            _ts(), _chunk_count, _event_count, _elapsed, sum(len(p) for p in content_parts),
+        )
 
         content = "".join(content_parts)
         tool_calls = []
@@ -216,11 +235,15 @@ class Agent:
 
         # Stream first call with thinking support
         response: AIMessage | None = None
+        _run_event_count = 0
         async for event in self._astream_with_thinking(messages):
             if event["type"] == "_response":
                 response = event["data"]
             else:
+                _run_event_count += 1
+                logger.info("[SSE-TRACE] %s run() yielding #%d: type=%s len=%d", _ts(), _run_event_count, event["type"], len(str(event.get("data", ""))))
                 yield event
+        logger.info("[SSE-TRACE] %s run() 1st-call stream done: %d events yielded", _ts(), _run_event_count)
 
         if response and response.tool_calls:
             yield {"type": "tool_call", "data": [{"name": tc["name"], "args": tc["args"]} for tc in response.tool_calls]}
