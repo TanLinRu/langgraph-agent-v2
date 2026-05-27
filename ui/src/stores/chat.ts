@@ -45,7 +45,7 @@ export const useChatStore = defineStore('chat', () => {
   function sendMessage(content: string) {
     messages.value.push({ role: 'user', content })
     isLoading.value = true
-    streamingActive.value = true
+    streamingActive.value = false  // will be set true when assistant msg is created
 
     let thinkingContent = ''
     let assistantMsg: ChatMessage | null = null
@@ -56,6 +56,7 @@ export const useChatStore = defineStore('chat', () => {
         assistantMsg = { role: 'assistant', content: '', agentName }
         messages.value.push(assistantMsg)
         msgIdx = messages.value.length - 1
+        streamingActive.value = true  // hide loading dots, show assistant msg
       }
       if (agentName && !assistantMsg.agentName) {
         assistantMsg.agentName = agentName
@@ -75,7 +76,7 @@ export const useChatStore = defineStore('chat', () => {
 
         if (event.type === 'thinking_start') {
           thinkingContent = ''
-          ensureAssistantMsg(agentName)
+          // Don't create message yet — wait for first thinking content
         } else if (event.type === 'thinking') {
           thinkingContent += event.data as string
           const msg = ensureAssistantMsg(agentName)
