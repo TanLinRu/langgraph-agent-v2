@@ -1,84 +1,197 @@
-from langchain_core.language_models import BaseChatModel
-from langgraph.graph import StateGraph
-from langgraph.prebuilt import create_react_agent
+import json
+import logging
+import re
+from collections.abc import AsyncIterator
+from typing import Any
+
+from langchain_core.messages import HumanMessage
+from langchain.agents import create_agent
 
 from src.agent.config import AgentConfig
 from src.agent.models import resolve_model
-from src.agent.state import AgentState
 from src.agent.tools import TOOLS
 
+logger = logging.getLogger(__name__)
 
-def build_sub_agent(
-    name: str,
-    tools: list,
-    system_prompt: str,
-    config: AgentConfig,
-) -> StateGraph:
-    model = resolve_model(config)
-    return create_react_agent(model, tools, prompt=system_prompt, name=name)
+# Plan parsing regex: matches "- agent_name: description" (with optional bold)
+_PLAN_RE = re.compile(r"^\s*-?\s*\**\s*(\w+)\s*\**\s*[:：]\s*(.+)", re.MULTILINE)
+
+# Tool subsets per agent
+_CODER_TOOLS = ["execute_code", "read_file", "write_file"]
+_RESEARCHER_TOOLS = ["search_files", "list_directory", "read_file"]
+_ANALYST_TOOLS = ["execute_code", "read_file", "search_files"]
 
 
-class SupervisorManager:
+def _extract_code(text: str) -> str:
+    """Extract code from fenced blocks, backticks, or plain text."""
+    # Try fenced code block first
+    m = re.search(r"```(?:\w+)?\n(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Try inline backticks
+    m = re.search(r"`([^`]+)`", text)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+def _parse_plan(plan_text: str) -> list[dict[str, str]]:
+    """Parse plan text into list of {agent, task} dicts."""
+    results = []
+    for m in _PLAN_RE.finditer(plan_text):
+        agent_name = m.group(1).lower().strip("*")
+        task = m.group(2).strip()
+        if agent_name in ("coder", "researcher", "analyst", "direct"):
+            results.append({"agent": agent_name, "task": task})
+    return results
+
+
+class CustomSupervisor:
+    """Supervisor with think→plan→dispatch→summarize flow.
+
+    Uses LangChain native APIs:
+    - model.astream() for supervisor thinking/planning
+    - create_react_agent + astream_events for sub-agent streaming
+    """
+
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
-        self.agents: dict[str, StateGraph] = {}
+        self.model = resolve_model(config)
+        self.tool_map = {t.name: t for t in TOOLS}
+        self._build_agents()
 
-    def register_agent(self, name: str, agent: StateGraph) -> None:
-        self.agents[name] = agent
+    def _build_agents(self) -> None:
+        """Build sub-agent graphs with specialized tool sets."""
+        coder_tools = [self.tool_map[n] for n in _CODER_TOOLS if n in self.tool_map]
+        researcher_tools = [self.tool_map[n] for n in _RESEARCHER_TOOLS if n in self.tool_map]
+        analyst_tools = [self.tool_map[n] for n in _ANALYST_TOOLS if n in self.tool_map]
+        # direct agent has all tools — decides itself whether to use them
+        all_tools = list(self.tool_map.values())
 
-    def build_supervisor(self) -> StateGraph:
-        from langgraph_supervisor import create_supervisor
+        self.agents: dict[str, Any] = {
+            "coder": create_agent(
+                self.model, tools=coder_tools,
+                system_prompt="You are a coding expert. Write and execute code to solve problems. Think step by step.",
+                name="coder",
+            ),
+            "researcher": create_agent(
+                self.model, tools=researcher_tools,
+                system_prompt="You are a research expert. Search and analyze files to find information.",
+                name="researcher",
+            ),
+            "analyst": create_agent(
+                self.model, tools=analyst_tools,
+                system_prompt="You are a data analyst. Process data and generate insights.",
+                name="analyst",
+            ),
+            "direct": create_agent(
+                self.model, tools=all_tools,
+                system_prompt="You are a helpful assistant. Complete the task directly. Use tools only if needed (e.g., run code, read files). For simple questions or confirmations, respond directly without tools.",
+                name="direct",
+            ),
+        }
 
-        agent_list = list(self.agents.values())
-        model = resolve_model(self.config)
-        return create_supervisor(
-            agents=agent_list,
-            model=model,
-            prompt=self._supervisor_prompt(),
-        ).compile()
+    async def run(self, task: str) -> AsyncIterator[dict[str, Any]]:
+        """Run the supervisor flow: think → plan → dispatch → summarize."""
+        from src.agent.prompts.system_prompt import SUPERVISOR_PROMPT
 
-    def _supervisor_prompt(self) -> str:
-        agent_descs = []
-        for name in self.agents:
-            agent_descs.append(f"- **{name}**: delegate to this agent for {name}-related tasks")
-        agents_text = "\n".join(agent_descs)
-        return f"""You are a supervisor managing specialized agents:
+        # ── Phase 1: Think + Plan ──────────────────────────────────
+        yield {"type": "thinking_start", "agent_name": "supervisor"}
 
-{agents_text}
+        plan_messages = [
+            {"role": "system", "content": SUPERVISOR_PROMPT},
+            {"role": "user", "content": task},
+        ]
 
-Analyze the user's request and delegate to the most appropriate agent.
-For complex tasks, coordinate multiple agents sequentially."""
+        thinking_content = ""
+        plan_text = ""
+
+        async for chunk in self.model.astream(plan_messages):
+            # Extract reasoning_content (ChatDeepSeek auto-populates)
+            reasoning = chunk.additional_kwargs.get("reasoning_content")
+            if reasoning:
+                thinking_content += reasoning
+                yield {"type": "thinking", "data": reasoning, "agent_name": "supervisor"}
+            if chunk.content:
+                plan_text += chunk.content
+                # Also yield content as thinking for models without reasoning_content
+                if not reasoning:
+                    yield {"type": "thinking", "data": chunk.content, "agent_name": "supervisor"}
+
+        yield {"type": "thinking_done", "agent_name": "supervisor"}
+
+        # ── Phase 2: Parse Plan ────────────────────────────────────
+        steps = _parse_plan(plan_text)
+
+        if not steps:
+            # No valid plan — treat entire response as direct answer
+            yield {"type": "message", "data": plan_text, "agent_name": "supervisor"}
+            yield {"type": "done"}
+            return
+
+        yield {"type": "plan", "data": plan_text, "agent_name": "supervisor"}
+
+        # ── Phase 3: Dispatch to Sub-agents ────────────────────────
+        results: list[dict[str, str]] = []
+
+        for step in steps:
+            agent_name = step["agent"]
+            subtask = step["task"]
+
+            agent_graph = self.agents.get(agent_name)
+            if not agent_graph:
+                results.append({"agent": agent_name, "task": subtask, "result": f"Unknown agent: {agent_name}"})
+                continue
+
+            # Stream sub-agent execution via astream_events
+            agent_content = ""
+            async for event in agent_graph.astream_events(
+                {"messages": [HumanMessage(content=subtask)]}, version="v2"
+            ):
+                kind = event["event"]
+
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    reasoning = chunk.additional_kwargs.get("reasoning_content")
+                    if reasoning:
+                        yield {"type": "thinking", "data": reasoning, "agent_name": agent_name}
+                    elif chunk.content:
+                        agent_content += chunk.content
+
+                elif kind == "on_tool_start":
+                    yield {
+                        "type": "tool_call",
+                        "data": [{"name": event["name"], "args": event["data"].get("input", {})}],
+                        "agent_name": agent_name,
+                    }
+
+            results.append({"agent": agent_name, "task": subtask, "result": agent_content})
+            yield {"type": "message", "data": agent_content, "agent_name": agent_name}
+
+        # ── Phase 4: Summarize (skip if single agent) ──────────────
+        if len(results) == 1:
+            # Single agent — skip summarize, result already yielded
+            pass
+        else:
+            # Multiple agents — generate summary
+            results_text = "\n\n".join(
+                f"**{r['agent']}** ({r['task']}):\n{r['result']}" for r in results
+            )
+            summary_prompt = [
+                {"role": "system", "content": "You are a supervisor. Summarize the results from your team concisely."},
+                {"role": "user", "content": f"Task: {task}\n\nResults:\n{results_text}\n\nProvide a concise summary."},
+            ]
+
+            summary = ""
+            async for chunk in self.model.astream(summary_prompt):
+                if chunk.content:
+                    summary += chunk.content
+
+            yield {"type": "summary", "data": summary, "agent_name": "supervisor"}
+
+        yield {"type": "done"}
 
 
-def create_default_supervisor(config: AgentConfig) -> SupervisorManager:
-    from src.agent.prompts.system_prompt import SUPERVISOR_PROMPT
-    from src.agent.tools.execute_code import execute_code
-    from src.agent.tools.file_ops import list_directory, read_file, write_file
-    from src.agent.tools.search import search_files
-
-    manager = SupervisorManager(config)
-
-    coder = build_sub_agent(
-        "coder",
-        tools=[execute_code, read_file, write_file],
-        system_prompt="You are a coding expert. Write and execute code to solve problems.",
-        config=config,
-    )
-    researcher = build_sub_agent(
-        "researcher",
-        tools=[search_files, list_directory, read_file],
-        system_prompt="You are a research expert. Search and analyze files to find information.",
-        config=config,
-    )
-    analyst = build_sub_agent(
-        "analyst",
-        tools=[execute_code, read_file, search_files],
-        system_prompt="You are a data analyst. Process data and generate insights.",
-        config=config,
-    )
-
-    manager.register_agent("coder", coder)
-    manager.register_agent("researcher", researcher)
-    manager.register_agent("analyst", analyst)
-
-    return manager
+def create_default_supervisor(config: AgentConfig) -> CustomSupervisor:
+    """Factory function to create the default supervisor."""
+    return CustomSupervisor(config)

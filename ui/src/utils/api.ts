@@ -4,7 +4,10 @@ export interface ChatMessage {
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>
   agentName?: string
   thinking?: string
+  isThinking?: boolean
   isSummary?: boolean
+  isPlan?: boolean
+  compacted?: boolean
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
@@ -31,9 +34,18 @@ export function streamChatCallbacks(
   const eventTypes = ['thinking_start', 'thinking', 'thinking_done', 'tool_call', 'message', 'summary', 'error']
   for (const type of eventTypes) {
     es.addEventListener(type, (e) => {
-      const data = JSON.parse((e as MessageEvent).data)
-      console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms SSE: ${type}`)
-      onEvent(data)
+      const raw = (e as MessageEvent).data
+      if (!raw) {
+        console.warn(`[SSE-TRACE] ${type}: empty data, skipping`)
+        return
+      }
+      try {
+        const data = JSON.parse(raw)
+        console.log(`[SSE-TRACE] ${(performance.now() - t0).toFixed(0)}ms SSE: ${type}`)
+        onEvent(data)
+      } catch (err) {
+        console.warn(`[SSE-TRACE] ${type}: invalid JSON:`, raw)
+      }
     })
   }
 
@@ -125,8 +137,43 @@ export async function listTools(): Promise<Array<{ name: string; description: st
   return data.tools
 }
 
-export async function listSessions(): Promise<string[]> {
+export interface SessionInfo {
+  session_id: string
+  user_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  summary: string
+  compacted_at: string | null
+}
+
+export async function listSessions(): Promise<SessionInfo[]> {
   const res = await fetch(`${API_BASE}/api/sessions`)
   const data = await res.json()
   return data.sessions
+}
+
+export async function restoreSession(sessionId: string): Promise<{
+  session_id: string
+  messages: Array<{ type: string; content: string; thinking?: string; tool_calls?: Array<{ name: string; args: Record<string, unknown> }>; name?: string; compacted?: boolean }>
+  summary: string
+}> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`)
+  if (!res.ok) throw new Error(`Session not found: ${sessionId}`)
+  return res.json()
+}
+
+export async function compactSession(sessionId: string): Promise<{
+  session_id: string
+  summary: string
+  deleted_messages: number
+  kept_messages: number
+}> {
+  const res = await fetch(`${API_BASE}/api/compact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+  if (!res.ok) throw new Error(`Compact failed: ${res.status}`)
+  return res.json()
 }

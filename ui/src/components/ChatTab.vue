@@ -57,6 +57,7 @@ const AGENT_COLORS: Record<string, string> = {
   coder: '#34d399',
   researcher: '#fbbf24',
   analyst: '#fb7185',
+  direct: '#60a5fa',
 }
 
 const AGENT_LABELS: Record<string, string> = {
@@ -64,6 +65,15 @@ const AGENT_LABELS: Record<string, string> = {
   coder: 'Coder',
   researcher: 'Researcher',
   analyst: 'Analyst',
+  direct: 'Direct',
+}
+
+const AGENT_AVATARS: Record<string, string> = {
+  supervisor: '🧑‍💼',
+  coder: '👨‍💻',
+  researcher: '🔍',
+  analyst: '📊',
+  direct: '⚡',
 }
 
 function agentColor(name?: string): string {
@@ -74,11 +84,51 @@ function agentLabel(name?: string): string {
   return AGENT_LABELS[name || ''] || name || 'assistant'
 }
 
+function agentAvatar(name?: string): string {
+  return AGENT_AVATARS[name || ''] || '🤖'
+}
+
 const chat = useChatStore()
 const input = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
 const thinkingExpanded = ref<Set<number>>(new Set())
 const thinkingLive = ref<Set<number>>(new Set())
+
+const COMMANDS = [
+  { cmd: '/compact', desc: 'Compress session context' },
+  { cmd: '/clear', desc: 'Clear all messages' },
+  { cmd: '/new', desc: 'Start a new session' },
+]
+
+const showCommands = ref(false)
+const commandFilter = ref('')
+const filteredCommands = ref<typeof COMMANDS>([])
+
+function onInput(e: Event) {
+  const val = (e.target as HTMLInputElement).value
+  if (val.startsWith('/') && !val.includes(' ')) {
+    commandFilter.value = val.toLowerCase()
+    filteredCommands.value = COMMANDS.filter(c => c.cmd.startsWith(commandFilter.value))
+    showCommands.value = filteredCommands.value.length > 0
+  } else {
+    showCommands.value = false
+  }
+}
+
+function selectCommand(cmd: string) {
+  input.value = cmd + ' '
+  showCommands.value = false
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    showCommands.value = false
+  }
+  if (e.key === 'Tab' && showCommands.value && filteredCommands.value.length) {
+    e.preventDefault()
+    selectCommand(filteredCommands.value[0].cmd)
+  }
+}
 
 function isTyping(i: number): boolean {
   const state = chat.typewriterState[i]
@@ -103,27 +153,42 @@ function toggleThinking(index: number) {
   }
 }
 
-watch(() => chat.messages.map(m => m.thinking), () => {
+// Auto-expand thinking blocks when they appear or change
+watch(() => chat.messages.map(m => ({ thinking: m.thinking, isThinking: m.isThinking })), (newVals, oldVals) => {
   const msgs = chat.messages
   for (let i = 0; i < msgs.length; i++) {
-    if (msgs[i].thinking && !thinkingExpanded.value.has(i)) {
+    const newVal = newVals?.[i]
+    const oldVal = oldVals?.[i]
+    // When thinking content appears or isThinking becomes true, auto-expand
+    if ((newVal?.thinking && newVal?.thinking !== oldVal?.thinking) || (newVal?.isThinking && !oldVal?.isThinking)) {
       thinkingExpanded.value.add(i)
       thinkingLive.value.add(i)
+    }
+    // When isThinking becomes false, remove from live set
+    if (!newVal?.isThinking && oldVal?.isThinking) {
+      thinkingLive.value.delete(i)
     }
   }
 }, { deep: true })
 
-watch(() => chat.isLoading, (loading) => {
-  if (!loading) {
-    thinkingLive.value.clear()
-  }
+// Also watch for new messages that might have thinking
+watch(() => chat.messages.length, () => {
+  nextTick(() => {
+    const msgs = chat.messages
+    for (let i = 0; i < msgs.length; i++) {
+      if ((msgs[i].thinking || msgs[i].isThinking) && !thinkingExpanded.value.has(i)) {
+        thinkingExpanded.value.add(i)
+        thinkingLive.value.add(i)
+      }
+    }
+  })
 })
 
 async function send() {
   const msg = input.value.trim()
   if (!msg || chat.isLoading) return
   input.value = ''
-  await chat.sendMessage(msg)
+  await chat.send(msg)
 }
 
 watch(() => chat.messages.length, async () => {
@@ -141,28 +206,36 @@ watch(() => chat.messages.length, async () => {
       </div>
       <template v-for="(msg, i) in chat.messages" :key="i">
       <div
-        v-if="msg.role !== 'assistant' || msg.content || msg.thinking || msg.toolCalls?.length"
-        :class="['msg', msg.role, { 'is-summary': msg.isSummary }]"
+        v-if="msg.role !== 'assistant' || msg.content || msg.thinking || msg.isThinking || msg.toolCalls?.length"
+        :class="['msg', msg.role, { 'is-summary': msg.isSummary, 'is-plan': msg.isPlan, 'is-compacted': msg.compacted }]"
         :style="msg.role === 'assistant' && msg.agentName ? { '--agent-color': agentColor(msg.agentName) } : {}"
       >
-        <!-- Agent label badge -->
-        <div v-if="msg.role === 'assistant' && msg.agentName" class="msg-role agent-badge" :style="{ color: agentColor(msg.agentName) }">
-          {{ agentLabel(msg.agentName) }}
+        <!-- Avatar + label row -->
+        <div class="msg-header">
+          <div v-if="msg.role === 'assistant'" class="avatar" :style="{ background: agentColor(msg.agentName) + '22', borderColor: agentColor(msg.agentName) + '44' }">
+            {{ agentAvatar(msg.agentName) }}
+          </div>
+          <div v-else class="avatar user-avatar">
+            {{ msg.role === 'user' ? '👤' : '⚙️' }}
+          </div>
+          <div v-if="msg.role === 'assistant' && msg.agentName" class="msg-role agent-badge" :style="{ color: agentColor(msg.agentName) }">
+            {{ agentLabel(msg.agentName) }}
+          </div>
+          <div v-else class="msg-role">{{ msg.role }}</div>
         </div>
-        <div v-else class="msg-role">{{ msg.role }}</div>
 
-        <!-- Thinking block -->
-        <div v-if="msg.thinking" class="thinking-block" :class="{ 'is-live': thinkingLive.has(i) }">
+        <!-- Thinking block: show if thinking content exists OR currently thinking -->
+        <div v-if="msg.thinking || msg.isThinking" class="thinking-block" :class="{ 'is-live': msg.isThinking }">
           <button class="thinking-toggle" @click="toggleThinking(i)">
             <span class="thinking-icon">{{ thinkingExpanded.has(i) ? '▾' : '▸' }}</span>
-            <span v-if="thinkingLive.has(i)" class="thinking-label">
+            <span v-if="msg.isThinking" class="thinking-label">
               Thinking<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
             </span>
             <span v-else>Thinking process</span>
           </button>
           <Transition name="thinking-expand">
             <div v-if="thinkingExpanded.has(i)" class="thinking-content">
-              {{ msg.thinking }}<span v-if="thinkingLive.has(i)" class="cursor-blink">|</span>
+              {{ msg.thinking }}<span v-if="msg.isThinking" class="cursor-blink">|</span>
             </div>
           </Transition>
         </div>
@@ -191,14 +264,27 @@ watch(() => chat.messages.length, async () => {
       </div>
       </template>
       <div v-if="chat.isLoading && !chat.streamingActive" class="msg assistant loading">
-        <div class="msg-role">assistant</div>
+        <div class="msg-header">
+          <div class="avatar" style="background: rgba(129,140,248,0.15); border-color: rgba(129,140,248,0.3)">🤖</div>
+          <div class="msg-role">assistant</div>
+        </div>
         <div class="msg-content">
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         </div>
       </div>
     </div>
+    <div class="mode-toggle">
+      <button :class="{ active: chat.mode === 'single' }" @click="chat.mode = 'single'">Single Agent</button>
+      <button :class="{ active: chat.mode === 'multi' }" @click="chat.mode = 'multi'">Multi Agent</button>
+    </div>
+    <div class="command-dropdown" v-if="showCommands">
+      <div v-for="c in filteredCommands" :key="c.cmd" class="command-item" @mousedown.prevent="selectCommand(c.cmd)">
+        <span class="command-cmd">{{ c.cmd }}</span>
+        <span class="command-desc">{{ c.desc }}</span>
+      </div>
+    </div>
     <form class="input-bar" @submit.prevent="send">
-      <input v-model="input" placeholder="Type a message..." :disabled="chat.isLoading" />
+      <input v-model="input" placeholder="Type a message or / for commands..." :disabled="chat.isLoading" @input="onInput" @keydown="onKeydown" @blur="showCommands = false" />
       <button type="submit" :disabled="chat.isLoading || !input.trim()">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M22 2L11 13" /><path d="M22 2L15 22L11 13L2 9L22 2Z" />
@@ -252,7 +338,9 @@ watch(() => chat.messages.length, async () => {
 .msg {
   padding: 14px 18px;
   border-radius: 16px;
-  max-width: 75%;
+  max-width: 85%;
+  width: fit-content;
+  min-width: 200px;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -285,20 +373,61 @@ watch(() => chat.messages.length, async () => {
   border-left: 3px solid #818cf8;
   align-self: stretch;
   max-width: 100%;
+  width: auto;
 }
 
 .msg.system {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
   align-self: center;
   font-size: 13px;
   text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  min-width: auto;
+}
+
+.msg.is-plan {
+  background: rgba(34, 211, 238, 0.08);
+  border-color: rgba(34, 211, 238, 0.25);
+  border-left: 3px solid #22d3ee;
+  align-self: stretch;
+  max-width: 100%;
+  width: auto;
+}
+
+.msg.is-compacted {
+  border-style: dashed;
+  opacity: 0.5;
+}
+
+/* ── Avatar ──────────────────────────────────────────────────── */
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.user-avatar {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
 .msg-role {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 6px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -676,5 +805,71 @@ watch(() => chat.messages.length, async () => {
 .input-bar button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* ── Mode toggle ──────────────────────────────────────────────── */
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 8px 24px 0;
+}
+
+.mode-toggle button {
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-toggle button.active {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+}
+
+.mode-toggle button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Command dropdown ─────────────────────────────────────────── */
+.command-dropdown {
+  margin: 0 24px;
+  background: rgba(30, 30, 50, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.command-item:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.command-cmd {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  color: #818cf8;
+  font-weight: 500;
+}
+
+.command-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
 }
 </style>

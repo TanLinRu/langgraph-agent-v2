@@ -71,3 +71,50 @@ def test_orchestrate_endpoint_exists(client):
     """Verify /api/orchestrate endpoint accepts POST."""
     resp = client.post("/api/orchestrate", json={"task": "test"}, headers={"Accept": "text/event-stream"})
     assert resp.status_code in (200, 500)
+
+
+def test_orchestrate_sse_format(client):
+    """Verify /api/orchestrate emits fine-grained SSE events."""
+    import json
+    import server
+
+    mock_supervisor = MagicMock()
+
+    async def mock_run(task):
+        yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
+        yield {"type": "thinking", "data": "thinking...", "agent_name": "supervisor"}
+        yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}
+        yield {"type": "plan", "data": "## Plan\n- coder: write code", "agent_name": "supervisor"}
+        yield {"type": "tool_call", "data": [{"name": "coder", "args": {"task": "write code"}}], "agent_name": "coder"}
+        yield {"type": "message", "data": "code result", "agent_name": "coder"}
+        yield {"type": "summary", "data": "Done.", "agent_name": "supervisor"}
+        yield {"type": "done"}
+
+    mock_supervisor.run = mock_run
+
+    original = server.supervisor_instance
+    server.supervisor_instance = mock_supervisor
+    try:
+        resp = client.post("/api/orchestrate", json={"task": "test"}, headers={"Accept": "text/event-stream"})
+        assert resp.status_code == 200
+
+        # Parse SSE events
+        events = []
+        for line in resp.text.split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+
+        event_types = [e["type"] for e in events if "type" in e]
+        assert "thinking_start" in event_types
+        assert "plan" in event_types
+        assert "tool_call" in event_types
+        assert "message" in event_types
+        assert "summary" in event_types
+        assert "done" in event_types
+
+        # Verify agent_name is present on events
+        plan_events = [e for e in events if e.get("type") == "plan"]
+        assert len(plan_events) == 1
+        assert plan_events[0]["agent_name"] == "supervisor"
+    finally:
+        server.supervisor_instance = original

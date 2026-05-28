@@ -31,6 +31,9 @@ class AgentConfig(BaseSettings):
     agent_server_host: str = Field(default="0.0.0.0", alias="AGENT_SERVER_HOST")
     agent_server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
 
+    # ── Session ──────────────────────────────────────────────────
+    agent_session_ttl_hours: int = Field(default=24, alias="AGENT_SESSION_TTL_HOURS")
+
     # ── Convenience properties ───────────────────────────────────
     @property
     def model_provider(self) -> str:
@@ -67,3 +70,7 @@ class AgentConfig(BaseSettings):
     @property
     def server_port(self) -> int:
         return self.agent_server_port
+
+    @property
+    def session_ttl_hours(self) -> int:
+        return self.agent_session_ttl_hours

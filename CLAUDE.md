@@ -9,7 +9,7 @@ A LangGraph-based multi-agent AI system with supervisor orchestration, context c
 - **Backend**: Python 3.11+, LangGraph + LangChain, FastAPI
 - **Frontend**: Vue 3 + Vite + Pinia + TypeScript
 - **Storage**: SQLite (sessions/messages/memories) + ChromaDB (vector memory)
-- **Tests**: 48 passing (pytest)
+- **Tests**: 64 passing (pytest)
 
 ## Key Documents
 
@@ -22,7 +22,7 @@ A LangGraph-based multi-agent AI system with supervisor orchestration, context c
 
 ### Agent (`src/agent/agent.py`)
 
-Core `Agent` class with manual ReAct loop. Uses raw `openai.AsyncOpenAI` client for streaming with `reasoning_content` (thinking tokens) support. Two-call pattern per turn: LLM call 1 → tool execution → optional compression → LLM call 2. Messages converted between LangChain and OpenAI API format via `_messages_to_openai()`.
+Core `Agent` class using LangChain native `create_agent` + `astream_events`. Automatic ReAct loop (LLM → tools → LLM until no tool_calls). `reasoning_content` extracted from `chunk.additional_kwargs` (auto-populated by `ChatDeepSeek` via `init_chat_model`). Context compression before first call if token threshold exceeded.
 
 ### Graph (`src/agent/graph.py`)
 
@@ -30,7 +30,7 @@ LangGraph `StateGraph` with 2 nodes (think, tools) using `ToolNode`. `create_gra
 
 ### Multi-Agent Supervisor (`src/agent/supervisor.py`)
 
-Three sub-agents (`coder`, `researcher`, `analyst`) orchestrated via `langgraph_supervisor.create_supervisor`. Each is a `create_react_agent` with specialized tool sets. SSE events carry `agent_name` field.
+`CustomSupervisor` with think→plan→dispatch→summarize flow. Supervisor uses `model.astream()` for thinking/planning, then dispatches to sub-agents (`coder`, `researcher`, `analyst`) via `create_agent` + `astream_events` for real-time streaming. `direct` agent name for simple single-tool tasks. Plan parsed via regex from supervisor output. Single-agent results skip summarize phase.
 
 ### Context Compression (`src/agent/context/compression.py`)
 
@@ -48,13 +48,15 @@ SQLite (structured metadata) + ChromaDB (vector similarity). Dual-write on store
 
 FastAPI with CORS. Key endpoints:
 - `POST /chat` — SSE stream, single agent
+- `GET /chat/stream` — GET-based SSE via EventSourceResponse (browser native EventSource)
 - `POST /api/orchestrate` — SSE stream, multi-agent supervisor (events include `agent_name`)
+- `POST /api/compact` — compress session context (summarize old, keep recent 5)
 - `GET /api/tools`, `GET /api/sessions`, `GET /api/skills`
 - `POST /api/memory/store`, `POST /api/memory/query`
 
 ### Frontend (`ui/`)
 
-Vue 3 + Pinia stores. `ChatTab.vue` renders markdown (marked + highlight.js), KaTeX math, thinking expand/collapse, and multi-agent message distinction (colored badges per agent). `AgentsTab.vue` shows tool cards.
+Vue 3 + Pinia stores. `ChatTab.vue` renders markdown (marked + highlight.js), KaTeX math, thinking expand/collapse, multi-agent message distinction (colored badges per agent), command autocomplete (`/compact`, `/clear`, `/new`), and mode toggle (single/multi agent). Session persisted to localStorage, auto-restored on page load. `AgentsTab.vue` shows tool cards.
 
 ## Commands
 
@@ -64,7 +66,7 @@ pip install -e ".[dev]"          # Install with dev deps
 python server.py                 # FastAPI server (port 8000)
 python -m src.agent.main --input "msg"  # CLI single-shot
 python -m src.agent.main --interactive  # CLI interactive
-pytest                           # All tests (48 tests)
+pytest                           # All tests (64 tests)
 pytest tests/test_tools.py      # Single test file
 pytest -k "test_execute_code"   # Single test by name
 pytest --cov=src                # With coverage
@@ -94,7 +96,9 @@ Config class uses `Field(alias=...)` (not `env_prefix`) to support both prefix s
 - Tool results truncated via `truncate_result()` before appending to history (per-tool limits)
 - Skills loaded at runtime from `skills/*.md`, injected into system prompt
 - Shell safety: `execute_code` checks `DANGEROUS_SHELL_PATTERNS` (from deepagents) before execution
-- Session persistence: SQLite tables (sessions, messages) in `checkpoint.py`
+- Session persistence: SQLite tables (sessions, messages) in `checkpoint.py` with auto-migration, compaction support
+- Model initialization: `init_chat_model` auto-selects correct class (ChatDeepSeek for reasoning_content, ChatOpenAI, ChatAnthropic)
+- Thinking batching: server batches thinking chunks before SSE emission (`_batch_thinking`)
 - Audit logging: JSONL files in `memory/audit/{date}.jsonl`
 
 ## Integration Testing Policy
