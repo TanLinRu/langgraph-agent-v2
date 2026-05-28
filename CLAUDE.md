@@ -15,6 +15,7 @@ A LangGraph-based multi-agent AI system with supervisor orchestration, context c
 
 | File | Purpose |
 |------|---------|
+| `README.md` | Project overview, architecture, quick start, API reference |
 | `docs/langgraph-agent-v2.md` | Implementation spec — every file, class, function with full code listings |
 | `docs/agent-flow-design.md` | Agent flow topology, retry/resilience policy, error handling protocol |
 
@@ -56,7 +57,7 @@ FastAPI with CORS. Key endpoints:
 
 ### Frontend (`ui/`)
 
-Vue 3 + Pinia stores. `ChatTab.vue` renders markdown (marked + highlight.js), KaTeX math, thinking expand/collapse, multi-agent message distinction (colored badges per agent), command autocomplete (`/compact`, `/clear`, `/new`), and mode toggle (single/multi agent). Session persisted to localStorage, auto-restored on page load. `AgentsTab.vue` shows tool cards.
+Vue 3 + Pinia stores. `ChatTab.vue` renders markdown (marked + highlight.js), KaTeX math, thinking expand/collapse with typewriter animation, multi-agent message distinction (colored badges per agent), command autocomplete (`/compact`, `/clear`, `/new`), and mode toggle (single/multi agent). `chat.ts` store uses SSE backpressure queue (120ms delay for major events) and dual typewriter systems: message typewriter (3 chars/15ms) and thinking typewriter (2 chars/15ms) with `pendingDone` pattern to safely clear `isThinking` after animation completes. Session persisted to localStorage, auto-restored on page load. `AgentsTab.vue` shows tool cards.
 
 ## Commands
 
@@ -98,7 +99,7 @@ Config class uses `Field(alias=...)` (not `env_prefix`) to support both prefix s
 - Shell safety: `execute_code` checks `DANGEROUS_SHELL_PATTERNS` (from deepagents) before execution
 - Session persistence: SQLite tables (sessions, messages) in `checkpoint.py` with auto-migration, compaction support
 - Model initialization: `init_chat_model` auto-selects correct class (ChatDeepSeek for reasoning_content, ChatOpenAI, ChatAnthropic)
-- Thinking batching: server batches thinking chunks before SSE emission (`_batch_thinking`)
+- Thinking batching: server batches thinking chunks before SSE emission (`_batch_thinking`); frontend renders via typewriter with `pendingDone` pattern to avoid race condition between `thinking_done` event and animation completion
 - Audit logging: JSONL files in `memory/audit/{date}.jsonl`
 
 ## Integration Testing Policy
