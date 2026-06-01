@@ -1,7 +1,4 @@
 """Mock end-to-end flow test — verifies the agent loop works without real API calls."""
-import asyncio
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -59,7 +56,7 @@ def test_memory_store_retrieve(tmp_path, monkeypatch):
 
 
 def test_skills_loading():
-    from src.agent.skills import load_skills, get_skills_prompt
+    from src.agent.skills import get_skills_prompt, load_skills
     skills = load_skills()
     assert isinstance(skills, list)
     prompt = get_skills_prompt()

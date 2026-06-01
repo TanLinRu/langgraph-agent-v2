@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/deepseek-v4-flash-free",
+  "default_agent": "build",
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "command": {
+    "test": {
+      "description": "Run pytest with coverage",
+      "template": "Run `pytest --cov=src -v` and report results.\n\n$ARGUMENTS",
+      "agent": "build"
+    },
+    "lint": {
+      "description": "Run ruff + mypy linting",
+      "template": "Run `ruff check .` and `mypy src`. Fix any issues found.\n\n$ARGUMENTS",
+      "agent": "build"
+    },
+    "dev": {
+      "description": "Start FastAPI dev server",
+      "template": "Start the FastAPI dev server with `python server.py`. Do not use --reload on Windows.",
+      "agent": "build"
+    }
+  }
+}

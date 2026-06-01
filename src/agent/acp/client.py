@@ -1,0 +1,385 @@
+"""Native ACP (Agent Client Protocol) client — JSON-RPC 2.0 over stdio.
+
+Connects to `opencode acp` for persistent agent sessions.
+"""
+
+import asyncio
+import json
+import logging
+import os
+import sys
+import traceback
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ACPEvent:
+    type: str
+    data: Any = None
+    session_id: str = ""
+
+
+class ACPNativeClient:
+    """Native ACP client using JSON-RPC 2.0 over stdio.
+
+    Manages a persistent `opencode acp` subprocess. Supports:
+    - initialize (protocol handshake)
+    - session/new, session/load, session/close
+    - session/prompt (streaming)
+    - session/cancel
+    """
+
+    def __init__(self, command: str, args: list[str] | None = None, timeout: int = 600):
+        self.command = command
+        self.args = args or []
+        self.timeout = timeout
+        self.proc: asyncio.subprocess.Process | None = None
+        self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self._request_id = 0
+        self._pending: dict[int, asyncio.Future] = {}
+        self._notification_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=0)
+        self._connected = False
+        self._initialized = False
+
+    async def connect(self, cwd: str | None = None):
+        """Start `opencode acp` subprocess and initialize protocol."""
+        all_args = ["acp"]
+        if self.args:
+            all_args.extend(self.args)
+        if cwd:
+            all_args.extend(["--cwd", cwd])
+
+        cmd = self._resolve_command()
+        logger.info("[ACPNative] starting: %s %s", cmd, " ".join(all_args))
+
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                cmd, *all_args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"ACP command not found: {cmd}") from e
+
+        self._connected = True
+        self._reader_task = asyncio.create_task(self._reader_loop())
+        self._stderr_task = asyncio.create_task(self._stderr_loop())
+
+        await self._initialize()
+
+    def _resolve_command(self) -> str:
+        cmd = self.command
+        if sys.platform == "win32":
+            import shutil
+            full = shutil.which(cmd)
+            if full:
+                cmd = full
+        return cmd
+
+    async def _reader_loop(self):
+        """Read JSON-RPC messages from stdout."""
+        buf = b""
+        try:
+            while self._connected and self.proc and self.proc.stdout:
+                try:
+                    chunk = await self.proc.stdout.read(65536)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        logger.warning("[ACPNative] failed to parse: %s", line[:200])
+                        continue
+
+                    msg_id = msg.get("id")
+                    if msg_id is not None and msg_id in self._pending:
+                        logger.debug("[ACPNative] <- response id=%s", msg_id)
+                        self._pending[msg_id].set_result(msg)
+                    elif msg.get("method"):
+                        logger.debug("[ACPNative] <- notification method=%s", msg.get("method"))
+                        await self._notification_queue.put(msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("[ACPNative] reader error: %s", e)
+        finally:
+            self._connected = False
+
+    async def _stderr_loop(self):
+        """Log stderr output from the ACP process."""
+        try:
+            while self.proc and self.proc.stderr:
+                line = await self.proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", errors="replace").strip()
+                if text:
+                    logger.debug("[ACPNative:stderr] %s", text)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug("[ACPNative] stderr reader done: %s", e)
+
+    async def _send_request(self, method: str, params: dict | None = None) -> dict[str, Any]:
+        """Send JSON-RPC request and wait for response."""
+        self._request_id += 1
+        req_id = self._request_id
+        req: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
+        if params:
+            req["params"] = params
+
+        future = asyncio.get_event_loop().create_future()
+        self._pending[req_id] = future
+
+        await self._write(req)
+
+        try:
+            result = await asyncio.wait_for(future, timeout=self.timeout)
+            if "error" in result:
+                err = result["error"]
+                logger.warning("[ACPNative] request '%s' error: %s", method, json.dumps(err, ensure_ascii=False))
+                raise RuntimeError(f"ACP error [{err.get('code', '?')}]: {err.get('message', '')}")
+            r: dict[str, Any] = result.get("result", {})
+            return r
+        except asyncio.TimeoutError:
+            raise TimeoutError(f"ACP request '{method}' timed out after {self.timeout}s")
+        finally:
+            self._pending.pop(req_id, None)
+
+    async def _send_notification(self, method: str, params: dict | None = None):
+        """Send JSON-RPC notification (no response expected)."""
+        req: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if params:
+            req["params"] = params
+        await self._write(req)
+
+    async def _write(self, msg: dict[str, Any]):
+        """Write a JSON-RPC message to stdin."""
+        if not self.proc or not self.proc.stdin:
+            raise ConnectionError("ACP not connected")
+        data = (json.dumps(msg, ensure_ascii=False) + "\n").encode("utf-8")
+        self.proc.stdin.write(data)
+        await self.proc.stdin.drain()
+
+    async def _initialize(self):
+        """Perform ACP handshake."""
+        result = await self._send_request("initialize", {
+            "protocolVersion": 1.0,
+            "clientInfo": {"name": "langgraph-agent-v2", "version": "1.0"},
+            "capabilities": {},
+        })
+        self._initialized = True
+        caps = result.get("agentCapabilities", {})
+        logger.info("[ACPNative] initialized: caps=%s", json.dumps(caps, ensure_ascii=False)[:200])
+
+    async def create_session(self, cwd: str) -> str:
+        """Create a new ACP session, return session_id."""
+        result = await self._send_request("session/new", {
+            "cwd": os.path.abspath(cwd),
+            "mcpServers": [],
+        })
+        sid: str = result["sessionId"]
+        logger.info("[ACPNative] session created: %s", sid)
+        return sid
+
+    async def load_session(self, session_id: str, cwd: str) -> dict:
+        """Load an existing ACP session by replaying history."""
+        result = await self._send_request("session/load", {
+            "sessionId": session_id,
+            "cwd": os.path.abspath(cwd),
+            "mcpServers": [],
+        })
+        logger.info("[ACPNative] session loaded: %s", session_id)
+        return result
+
+    async def prompt(self, session_id: str, message: str) -> AsyncIterator[ACPEvent]:
+        """Send a prompt and stream ACP events."""
+        self._request_id += 1
+        req_id = self._request_id
+        req = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [
+                    {"type": "text", "text": message},
+                ],
+            },
+        }
+        future = asyncio.get_event_loop().create_future()
+        self._pending[req_id] = future
+
+        await self._write(req)
+
+        try:
+            while True:
+                notification_task = asyncio.create_task(self._notification_queue.get())
+                done, pending = await asyncio.wait(
+                    [notification_task, future],
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=self.timeout,
+                )
+
+                if future in done:
+                    notification_task.cancel()
+                    result = future.result()
+                    try:
+                        if "error" in result:
+                            err = result["error"]
+                            logger.warning("[ACPNative] prompt error: %s", json.dumps(err, ensure_ascii=False))
+                            yield ACPEvent(type="error", data=err.get("message", str(err)))
+                        else:
+                            resp = result.get("result", {})
+                            usage = resp.get("usage", {})
+                            if usage:
+                                yield ACPEvent(type="metrics", data={
+                                    "total_tokens": usage.get("totalTokens", 0),
+                                    "input_tokens": usage.get("inputTokens", 0),
+                                    "output_tokens": usage.get("outputTokens", 0),
+                                    "reasoning_tokens": usage.get("thoughtTokens", 0),
+                                    "cached_read": usage.get("cachedReadTokens", 0),
+                                    "cached_write": usage.get("cachedWriteTokens", 0),
+                                })
+                    except Exception as e:
+                        logger.error("[ACPNative] result parse error: %s\n%s", e, traceback.format_exc())
+                        logger.error("[ACPNative] raw result: %s", json.dumps(result, ensure_ascii=False)[:500])
+                    break
+
+                if notification_task in done:
+                    notification = notification_task.result()
+                    try:
+                        for event in self._parse_notification(notification):
+                            yield event
+                    except Exception as e:
+                        logger.error("[ACPNative] notification parse error: %s\n%s", e, traceback.format_exc())
+                        logger.error("[ACPNative] raw notification: %s", json.dumps(notification, ensure_ascii=False)[:500])
+
+        except TimeoutError:
+            logger.warning("[ACPNative] prompt timed out after %ds", self.timeout)
+            yield ACPEvent(type="error", data=f"Timeout after {self.timeout}s")
+            await self._send_notification("session/cancel", {"sessionId": session_id})
+        except asyncio.CancelledError:
+            await self._send_notification("session/cancel", {"sessionId": session_id})
+            raise
+
+        yield ACPEvent(type="done")
+
+    def _parse_notification(self, msg: dict) -> list[ACPEvent]:
+        """Parse a session/update notification into ACPEvents."""
+        events: list[ACPEvent] = []
+        params = msg.get("params", {})
+        if not isinstance(params, dict):
+            logger.debug("[ACPNative] notification params not a dict: %s", json.dumps(msg, ensure_ascii=False)[:300])
+            return events
+        session_id = params.get("sessionId", "")
+        update = params.get("update", {})
+        if not isinstance(update, dict):
+            logger.debug("[ACPNative] notification update not a dict: %s", json.dumps(msg, ensure_ascii=False)[:300])
+            return events
+        update_type = update.get("sessionUpdate", "")
+
+        content_raw = update.get("content", [])
+        content_list = content_raw if isinstance(content_raw, list) else [content_raw]
+        content_text = "".join(c.get("text", "") for c in content_list if isinstance(c, dict) and c.get("type") == "text")
+
+        if update_type == "agent_message_chunk":
+            if content_text:
+                events.append(ACPEvent(type="message", data=content_text, session_id=session_id))
+
+        elif update_type == "agent_thought_chunk":
+            if content_text:
+                events.append(ACPEvent(type="thinking", data=content_text, session_id=session_id))
+
+        elif update_type == "tool_call":
+            status = update.get("status", "pending")
+            if status == "pending":
+                events.append(ACPEvent(type="tool_call", data={
+                    "name": update.get("toolName", ""),
+                    "args": update.get("input", {}),
+                    "status": "pending",
+                }, session_id=session_id))
+            elif status == "in_progress":
+                pass
+            elif status == "completed":
+                events.append(ACPEvent(type="tool_call", data={
+                    "name": update.get("toolName", ""),
+                    "result": str(update.get("output", "")),
+                    "status": "completed",
+                }, session_id=session_id))
+            elif status == "error":
+                events.append(ACPEvent(type="error", data=f"Tool '{update.get('toolName', '')}' failed: {update.get('error', '')}", session_id=session_id))
+
+        elif update_type == "usage_update":
+            used = update.get("used", 0)
+            size = update.get("size", 0)
+            cost = update.get("cost", {})
+            events.append(ACPEvent(type="metrics", data={
+                "context_used": used,
+                "context_size": size,
+                "cost": cost.get("amount", 0),
+                "currency": cost.get("currency", "USD"),
+            }, session_id=session_id))
+
+        elif update_type == "plan":
+            events.append(ACPEvent(type="plan", data=str(update.get("plan", "")), session_id=session_id))
+
+        elif update_type in ("available_commands_update", "current_mode_update", "session_info_update"):
+            pass
+
+        return events
+
+    async def cancel(self, session_id: str):
+        """Cancel an active prompt (notification, no response)."""
+        await self._send_notification("session/cancel", {"sessionId": session_id})
+
+    async def close_session(self, session_id: str):
+        """Close an ACP session."""
+        try:
+            await self._send_request("session/close", {"sessionId": session_id})
+        except Exception as e:
+            logger.warning("[ACPNative] error closing session %s: %s", session_id, e)
+
+    async def disconnect(self):
+        """Disconnect from the ACP process."""
+        self._connected = False
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except asyncio.CancelledError:
+                pass
+        if self._stderr_task and not self._stderr_task.done():
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+        if self.proc:
+            try:
+                self.proc.terminate()
+                await asyncio.wait_for(self.proc.wait(), timeout=5)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    self.proc.kill()
+                    await asyncio.wait_for(self.proc.wait(), timeout=3)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    pass
+            except Exception:
+                pass
+            self.proc = None
+        logger.info("[ACPNative] disconnected")

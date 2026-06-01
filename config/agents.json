@@ -1,0 +1,85 @@
+{
+  "agents": {
+    "supervisor": {
+      "name": "Supervisor",
+      "type": "supervisor",
+      "desc": "会话编排与任务调度",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": [],
+      "system_prompt": "You are a supervisor that coordinates multiple agents to complete tasks. Analyze the task, create a plan, and dispatch to appropriate sub-agents."
+    },
+    "coder": {
+      "name": "Coder",
+      "type": "coder",
+      "desc": "代码生成、调试与重构",
+      "enabled": true,
+      "model": null,
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "tools": ["execute_code", "read_file", "write_file", "search_files"],
+      "system_prompt": "You are a coding expert. Write and execute code to solve problems. Think step by step. Always read relevant files before making changes."
+    },
+    "researcher": {
+      "name": "Researcher",
+      "type": "researcher",
+      "desc": "信息检索与文件搜索",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": ["search_files", "list_directory", "read_file"],
+      "system_prompt": "You are a research expert. Search and analyze files to find information. Be thorough and cite specific file paths and line numbers."
+    },
+    "analyst": {
+      "name": "Analyst",
+      "type": "analyst",
+      "desc": "数据分析与报告",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": ["execute_code", "read_file", "search_files"],
+      "system_prompt": "You are a data analyst. Process data and generate insights. Use code to analyze data when needed."
+    },
+    "direct": {
+      "name": "Direct",
+      "type": "direct",
+      "desc": "直接助手，处理简单任务",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": ["execute_code", "read_file", "write_file", "list_directory", "search_files"],
+      "system_prompt": "You are a helpful assistant. Complete the task directly. Use tools only if needed."
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "type": "opencode",
+      "desc": "外部 AI 编码代理 (OpenCode ACP)",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": [],
+      "system_prompt": "",
+      "acp_mode": true,
+      "acp_cli_id": "opencode"
+    },
+    "claude": {
+      "name": "Claude Code",
+      "type": "claude-agent",
+      "desc": "外部 AI 编码代理 (Claude Code ACP)",
+      "enabled": true,
+      "model": null,
+      "temperature": null,
+      "max_tokens": null,
+      "tools": [],
+      "system_prompt": "",
+      "acp_mode": true,
+      "acp_cli_id": "claude"
+    }
+  }
+}

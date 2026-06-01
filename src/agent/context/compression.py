@@ -33,13 +33,27 @@ class ContextCompressor:
         if llm is None:
             return self._fallback_summary(messages)
 
+        input_text = self._messages_to_text(messages)
+        # Limit input size to avoid exceeding context window
+        if len(input_text) > 30000:
+            input_text = input_text[:15000] + "\n\n[... truncated ...]\n\n" + input_text[-15000:]
+
         summary_prompt = [
             SystemMessage(content=(
-                "Summarize the following conversation history concisely. "
-                "Preserve: key facts, decisions made, tool results, and any open questions. "
-                "Use the format: [role] key points."
+                "You are a conversation summarizer for a coding assistant. "
+                "Create a structured summary of the conversation history below. "
+                "Preserve these critical details:\n"
+                "1. The user's original goal/task\n"
+                "2. Key decisions and their rationale\n"
+                "3. File paths, function names, and code structures discussed\n"
+                "4. Tool results (code output, file contents, search results)\n"
+                "5. Errors encountered and how they were resolved\n"
+                "6. Open questions or pending tasks\n\n"
+                "Format: Use bullet points grouped by topic. "
+                "Keep the summary under 500 words. "
+                "Do NOT include filler phrases like 'the user asked' or 'the assistant responded'."
             )),
-            HumanMessage(content=self._messages_to_text(messages)),
+            HumanMessage(content=f"Conversation to summarize:\n\n{input_text}"),
         ]
         response = await llm.ainvoke(summary_prompt)
         return response.content if isinstance(response.content, str) else str(response.content)
@@ -49,24 +63,24 @@ class ContextCompressor:
         for msg in messages:
             if isinstance(msg, ToolMessage):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                if len(content) > 300:
-                    content = content[:150] + " ... " + content[-150:]
+                if len(content) > 500:
+                    content = content[:250] + " ... " + content[-250:]
                 parts.append(f"[tool:{msg.name}] {content}")
             elif isinstance(msg, AIMessage):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
                 if msg.tool_calls:
                     calls = ", ".join(f"{tc['name']}({tc['args']})" for tc in msg.tool_calls)
                     parts.append(f"[assistant] Called: {calls}")
-                elif content:
-                    if len(content) > 300:
-                        content = content[:300] + "..."
+                if content:
+                    if len(content) > 500:
+                        content = content[:500] + "..."
                     parts.append(f"[assistant] {content}")
             elif isinstance(msg, HumanMessage):
                 content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                if len(content) > 300:
-                    content = content[:300] + "..."
+                if len(content) > 500:
+                    content = content[:500] + "..."
                 parts.append(f"[user] {content}")
-        return "\n".join(parts[-15:])
+        return "\n".join(parts)  # Keep ALL messages, not just last 15
 
     def _messages_to_text(self, messages: list[BaseMessage]) -> str:
         parts = []

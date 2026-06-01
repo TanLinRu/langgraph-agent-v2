@@ -1,4 +1,3 @@
-import asyncio
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage

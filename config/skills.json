@@ -1,0 +1,16 @@
+{
+  "skills": {
+    "code-review": {
+      "file": "skills/code-review.md",
+      "enabled": true,
+      "agents": ["coder", "opencode", "claude-agent"],
+      "desc": "Code review checklist and best practices"
+    },
+    "debug": {
+      "file": "skills/debug.md",
+      "enabled": true,
+      "agents": ["coder", "analyst"],
+      "desc": "Debugging strategies and tools"
+    }
+  }
+}

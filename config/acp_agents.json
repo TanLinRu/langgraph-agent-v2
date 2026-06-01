@@ -1,0 +1,22 @@
+{
+  "acp_agents": {
+    "opencode": {
+      "name": "OpenCode",
+      "command": "opencode",
+      "args": [],
+      "timeout": 600,
+      "cwd": ".",
+      "desc": "OpenCode — 终端 AI 编码代理，支持代码分析、重构、调试",
+      "enabled": true
+    },
+    "claude": {
+      "name": "Claude Code",
+      "command": "claude-agent-acp",
+      "args": [],
+      "timeout": 600,
+      "cwd": ".",
+      "desc": "Claude Code — Anthropic AI 编码代理",
+      "enabled": true
+    }
+  }
+}

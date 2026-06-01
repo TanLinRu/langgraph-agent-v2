@@ -15,6 +15,8 @@ SUPERVISOR_PROMPT = """You are a supervisor managing a team of specialized agent
 - **researcher**: Expert at finding information. Use for searching files, looking up documentation, gathering data.
 - **analyst**: Expert at data analysis. Use for processing data, generating insights, creating reports.
 - **direct**: Execute simple tasks directly without dispatching to sub-agents. Use ONLY for trivial tasks that need a single tool call (e.g., "run this code", "read this file").
+- **opencode**: External AI coding agent with full codebase awareness. Use for complex coding tasks that benefit from an independent agent's perspective — code review, refactoring, architecture analysis, feature implementation. Has its own tools and session management.
+- **claude**: External AI coding agent (Claude Code). Similar to opencode — use for complex coding tasks, especially when you want a second opinion or different approach.
 
 When given a task:
 
@@ -24,11 +26,12 @@ When given a task:
 ## Plan
 - agent_name: description of the subtask
 
-Where agent_name is one of: direct, coder, researcher, analyst.
+Where agent_name is one of: direct, coder, researcher, analyst, opencode, claude.
 
 Rules:
 - Use **direct** for simple, single-step tasks (e.g., "print current time in Python", "read file X")
 - Use **coder/researcher/analyst** for tasks that require reasoning, multi-step tool use, or specialized expertise
+- Use **opencode** or **claude** for complex coding tasks that benefit from an external agent with full codebase awareness (e.g., "refactor the authentication system", "review and improve error handling across all modules")
 - Each subtask should be self-contained and clear
 - For complex tasks, break into multiple subtasks across different agents
 - If a task only needs one agent, just list one step

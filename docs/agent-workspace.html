@@ -1,0 +1,2672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Workbench · 聚合工作台</title>
+<script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root, [data-theme="dark"] {
+  --bg-app: #0e0e18;
+  --bg-glass: rgba(255,255,255,0.045);
+  --bg-glass-hover: rgba(255,255,255,0.09);
+  --bg-surface: #11111d;
+  --bg-card: rgba(255,255,255,0.07);
+  --bg-input: rgba(255,255,255,0.09);
+  --bg-hover: rgba(255,255,255,0.10);
+  --bg-active: rgba(99,102,241,0.16);
+  --bg-elevated: rgba(255,255,255,0.12);
+  --bg-accent-strong: rgba(99,102,241,0.25);
+  --bg-accent-xstrong: rgba(99,102,241,0.55);
+  --bg-accent-hover: rgba(99,102,241,0.35);
+  --bg-overlay: rgba(0,0,0,0.25);
+  --bg-code: rgba(0,0,0,0.35);
+  --border: rgba(255,255,255,0.11);
+  --border-light: rgba(255,255,255,0.08);
+  --border-input: rgba(255,255,255,0.12);
+  --border-strong: rgba(255,255,255,0.15);
+  --border-accent: rgba(99,102,241,0.18);
+  --border-accent-soft: rgba(99,102,241,0.14);
+  --border-purple: rgba(129,140,248,0.12);
+  --text-primary: #f0f0f0;
+  --text-secondary: #b8b8b4;
+  --text-tertiary: #9c9c98;
+  --text-muted: #78787a;
+  --text-faint: #606062;
+  --accent: #818cf8;
+  --accent-text: #a5b4fc;
+  --accent-bg: rgba(99,102,241,0.12);
+  --accent-bg-hover: rgba(99,102,241,0.2);
+  --accent-bg-strong: rgba(99,102,241,0.25);
+  --accent-border: rgba(99,102,241,0.18);
+  --accent-focus: rgba(99,102,241,0.3);
+  --color-green: #34d399;
+  --color-green-text: #6ee7b7;
+  --color-amber: #fbbf24;
+  --color-red: #f87171;
+  --glass-blur: 32px;
+  --avatar-border: #12121e;
+  --orb-opacity: 0.4;
+  --scrollbar-thumb: rgba(255,255,255,0.12);
+  --scrollbar-thumb-hover: rgba(255,255,255,0.2);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.15);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.2);
+}
+[data-theme="light"] {
+  --bg-app: #f0f0f5;
+  --bg-glass: rgba(255,255,255,0.25);
+  --bg-glass-hover: rgba(255,255,255,0.35);
+  --bg-surface: rgba(255,255,255,0.55);
+  --bg-card: rgba(255,255,255,0.35);
+  --bg-input: rgba(255,255,255,0.30);
+  --bg-hover: rgba(255,255,255,0.08);
+  --bg-active: rgba(99,102,241,0.12);
+  --bg-elevated: rgba(255,255,255,0.45);
+  --bg-accent-strong: rgba(99,102,241,0.20);
+  --bg-accent-xstrong: rgba(99,102,241,0.40);
+  --bg-accent-hover: rgba(99,102,241,0.25);
+  --bg-overlay: rgba(255,255,255,0.35);
+  --bg-code: rgba(255,255,255,0.08);
+  --border: rgba(0,0,0,0.06);
+  --border-light: rgba(0,0,0,0.04);
+  --border-input: rgba(0,0,0,0.08);
+  --border-strong: rgba(0,0,0,0.09);
+  --border-accent: rgba(99,102,241,0.2);
+  --border-accent-soft: rgba(99,102,241,0.15);
+  --border-purple: rgba(129,140,248,0.15);
+  --text-primary: #111114;
+  --text-secondary: #4a4a50;
+  --text-tertiary: #727278;
+  --text-muted: #98989e;
+  --text-faint: #b8b8be;
+  --accent: #6366f1;
+  --accent-text: #6366f1;
+  --accent-bg: rgba(99,102,241,0.08);
+  --accent-bg-hover: rgba(99,102,241,0.15);
+  --accent-bg-strong: rgba(99,102,241,0.2);
+  --accent-border: rgba(99,102,241,0.2);
+  --accent-focus: rgba(99,102,241,0.35);
+  --color-green: #059669;
+  --color-green-text: #047857;
+  --color-amber: #d97706;
+  --color-red: #dc2626;
+  --avatar-border: rgba(255,255,255,0.8);
+  --glass-blur: 32px;
+  --orb-opacity: 0.15;
+  --scrollbar-thumb: rgba(0,0,0,0.1);
+  --scrollbar-thumb-hover: rgba(0,0,0,0.18);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.08);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Display', Roboto, 'Noto Sans SC', sans-serif;
+  font-size: 16px;
+  background: var(--bg-app); color: var(--text-primary);
+  overflow: hidden; height: 100vh; line-height: 1.55;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+.bg-orbs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: var(--orb-opacity); animation: orbFloat 24s ease-in-out infinite; }
+.orb-1 { width: 420px; height: 420px; background: radial-gradient(circle,#6366f1,#8b5cf6); top: -12%; left: -8%; animation-duration: 22s; }
+.orb-2 { width: 360px; height: 360px; background: radial-gradient(circle,#818cf8,#6366f1); bottom: -8%; right: -5%; animation-duration: 19s; animation-delay: -6s; }
+.orb-3 { width: 280px; height: 280px; background: radial-gradient(circle,#a78bfa,#818cf8); top: 40%; left: 45%; animation-duration: 26s; animation-delay: -12s; opacity: 0.2; }
+@keyframes orbFloat {
+  0%,100%{transform:translate(0,0)scale(1)}
+  25%{transform:translate(35px,-45px)scale(1.06)}
+  50%{transform:translate(-25px,25px)scale(0.94)}
+  75%{transform:translate(20px,30px)scale(1.02)}
+}
+
+.app { position: relative; z-index: 1; display: flex; height: 100vh; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 310px; min-width: 310px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(var(--glass-blur)); -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes slideIn { from{opacity:0;transform:translateX(-24px)} to{opacity:1;transform:translateX(0)} }
+.sidebar-header { padding: 24px 22px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-title { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; background: linear-gradient(135deg,#e0e7ff,#818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+[data-theme="light"] .sidebar-title { background: linear-gradient(135deg,#6366f1,#4f46e5); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.sidebar-sub { font-size: 14px; color: var(--text-tertiary); margin-top: 4px; letter-spacing: 0.02em; }
+
+.search-row {
+  display: flex; gap: 8px; margin: 10px 16px; align-items: center;
+}
+.search-wrap {
+  flex: 1; position: relative; display: flex; align-items: center;
+}
+.search-icon {
+  position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; color: var(--text-tertiary); pointer-events: none;
+  flex-shrink: 0;
+}
+.conv-search {
+  width: 100%; padding: 11px 15px 11px 36px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-input); border-radius: 10px;
+  color: var(--text-secondary); font-size: 15px; outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.conv-search::placeholder { color: var(--text-muted); }
+.conv-search:focus { border-color: var(--accent-focus); background: var(--bg-glass-hover); }
+.conv-search:focus ~ .search-icon { color: var(--accent); opacity: 0.5; }
+.new-conv-btn {
+  width: 36px; height: 36px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--accent-bg); border: 1px solid var(--border-accent); border-radius: 9px;
+  color: var(--accent-text); cursor: pointer; transition: all 0.2s;
+}
+.new-conv-btn:hover { background: var(--accent-bg-strong); }
+.new-conv-btn:active { transform: scale(0.92); }
+
+.conv-filter {
+  display: flex; gap: 4px; margin: 0 16px 8px; padding: 3px;
+  background: var(--bg-glass); border-radius: 8px;
+}
+.conv-filter-btn {
+  flex: 1; padding: 7px 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-tertiary); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px;
+}
+.conv-filter-btn:hover { color: var(--text-secondary); }
+.conv-filter-btn.active { background: var(--accent-bg); color: var(--accent-text); }
+
+.conv-list { flex: 1; overflow-y: auto; padding: 0 6px; }
+.conv-item-wrap {
+  position: relative; overflow: hidden; margin: 3px 6px; border-radius: 10px;
+}
+.conv-item-swipe-bg {
+  position: absolute; top: 0; right: -80px; width: 80px; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(239,68,68,0.12); border-radius: 10px; transition: right 0.25s cubic-bezier(0.16,1,0.3,1);
+}
+.conv-item-swipe-bg.open { right: 0; }
+.conv-item-swipe-btn {
+  background: none; border: none; color: var(--color-red); cursor: pointer;
+  font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  font-weight: 500; padding: 8px 12px;
+}
+.conv-item-swipe-btn svg { width: 18px; height: 18px; }
+.conv-item {
+  position: relative; z-index: 2; display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; cursor: pointer; transition: all 0.2s;
+  border-left: 3px solid transparent;
+  border-radius: 10px; background: transparent;
+  transform: translateX(0);
+  transition: transform 0.25s cubic-bezier(0.16,1,0.3,1), background 0.2s, border-color 0.2s;
+}
+.conv-item:hover { background: var(--bg-hover); }
+.conv-item.active { background: var(--bg-active); border-left-color: var(--accent); border-left-width: 4px; }
+.conv-item.processing { border-left-color: var(--accent); animation: processPulse 2s ease-in-out infinite; }
+@keyframes processPulse { 0%,100%{border-left-color:var(--accent)} 50%{border-left-color:rgba(129,140,248,0.3)} }
+.conv-item.swiped { transform: translateX(-80px); }
+.conv-avatar { width: 46px; height: 46px; flex-shrink: 0; position: relative; }
+.conv-avatar svg { width: 100%; height: 100%; display: block; }
+.conv-avatar-wrap { flex-shrink: 0; }
+.conv-avatar-wrap svg { width: 100%; height: 100%; display: block; }
+.conv-avatar-indicator {
+  position: absolute; right: -3px; bottom: -1px; width: 14px; height: 14px;
+  border-radius: 50%; border: 2px solid var(--avatar-border);
+  display: flex; align-items: center; justify-content: center;
+}
+.conv-avatar-indicator.completed { background: var(--accent); font-size: 11px; color: var(--bg-app); font-weight: 700; }
+.conv-avatar-indicator.processing { background: var(--accent); animation: badgePulse 1.2s ease-in-out infinite; }
+.conv-info { flex: 1; min-width: 0; }
+.conv-name {
+  font-size: 16px; font-weight: 550; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 8px;
+}
+.conv-name-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+.conv-name-badge.processing { background: rgba(129,140,248,0.12); color: var(--accent-text); display: flex; align-items: center; gap: 4px; }
+.conv-name-badge.active { background: rgba(52,211,153,0.1); color: var(--color-green-text); }
+.conv-name-badge.completed { background: var(--bg-hover); color: var(--text-secondary); }
+.conv-preview { font-size: 14px; font-weight: 450; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+.conv-thinking-row { display: inline-flex; align-items: center; gap: 4px; }
+.conv-thinking-agent { display: inline-flex; width: 18px; height: 18px; animation: agentThinkIn 0.4s ease both; }
+.conv-thinking-agent svg { width: 100%; height: 100%; display: block; }
+.conv-thinking-label { font-size: 13px; color: var(--accent-text); margin-left: 4px; font-weight: 500; }
+@keyframes agentThinkIn { from{opacity:0;transform:translateY(4px) scale(0.5)} to{opacity:1;transform:translateY(0) scale(1)} }
+.thinking-dots-inline { display: inline-flex; gap: 3px; align-items: center; }
+.thinking-dots-inline span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-text); animation: dotPulse 1.4s ease-in-out infinite; }
+.thinking-dots-inline span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots-inline span:nth-child(3) { animation-delay: 0.4s; }
+.conv-time { font-size: 13px; color: var(--text-muted); flex-shrink: 0; align-self: flex-start; margin-top: 4px; }
+.conv-unread { position: absolute; right: 10px; bottom: 8px; width: 8px; height: 8px; border-radius: 50%; background: #818cf8; box-shadow: 0 0 8px rgba(129,140,248,0.6); }
+
+/* ── Chat ── */
+.center-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-header {
+  padding: 16px 28px; display: flex; align-items: center; gap: 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface); backdrop-filter: blur(20px);
+}
+.chat-header .conv-avatar { width: 38px; height: 38px; }
+.chat-header-info { flex: 1; }
+.chat-header-name { font-size: 19px; font-weight: 570; letter-spacing: -0.01em; }
+.chat-header-status { font-size: 14px; color: var(--text-tertiary); display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.status-dot.online { background: var(--accent); box-shadow: 0 0 6px rgba(129,140,248,0.5); }
+.status-dot.busy { background: var(--accent); box-shadow: 0 0 6px rgba(129,140,248,0.5); }
+.status-dot.offline { background: var(--text-faint); }
+
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 24px 28px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.msg {
+  padding: 13px 20px; border-radius: 14px; max-width: 78%; min-width: 0;
+  word-break: break-word;
+  border: 1px solid var(--border);
+  animation-name: msgIn;
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.16,1,0.3,1);
+  animation-fill-mode: both;
+  line-height: 1.65;
+}
+@keyframes msgIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+.msg.user { background: var(--accent-bg); border-color: var(--border-accent-soft); align-self: flex-end; border-bottom-right-radius: 5px; }
+.msg.agent { background: var(--bg-glass); align-self: flex-start; border-bottom-left-radius: 5px; border-left: 3px solid var(--accent,rgba(255,255,255,0.15)); }
+.msg-agent { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--accent-text); margin-bottom: 5px; font-weight: 600; }
+.msg-text { font-size: 16px; line-height: 1.7; font-weight: 450; color: var(--text-primary); white-space: pre-wrap; }
+.file-ref {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 12px; margin: 1px 2px;
+  background: var(--accent-bg); border: 1px solid var(--border-accent); border-radius: 7px;
+  color: var(--accent-text); font-size: 13px; font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  cursor: pointer; transition: all 0.15s;
+}
+.file-ref:hover { background: var(--accent-bg-hover); border-color: var(--accent-focus); }
+
+.input-bar {
+  padding: 16px 24px; display: flex; gap: 12px;
+  background: var(--bg-surface); backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border);
+}
+.input-bar input {
+  flex: 1; padding: 13px 18px;
+  background: var(--bg-hover); border: 1px solid var(--border-input); border-radius: 12px;
+  color: var(--text-primary); font-size: 16px; outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+.input-bar input::placeholder { color: var(--text-muted); }
+.input-bar input:focus { border-color: var(--accent-focus); background: var(--bg-glass-hover); }
+.input-bar button {
+  width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-accent-strong); border: 1px solid var(--border-accent); border-radius: 12px;
+  color: var(--accent-text); cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+}
+.input-bar button:hover { background: var(--bg-accent-hover); }
+.input-bar button:active { transform: scale(0.95); }
+
+/* ── Right Panel ── */
+.right-panel {
+  width: 360px; min-width: 360px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  animation: slideInR 0.5s cubic-bezier(0.16,1,0.3,1) both; animation-delay: 0.08s;
+}
+@keyframes slideInR { from{opacity:0;transform:translateX(24px)} to{opacity:1;transform:translateX(0)} }
+
+.panel-tabs {
+  display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.panel-tab {
+  flex: 1; padding: 14px 6px;
+  background: transparent; border: none;
+  color: var(--text-tertiary); font-size: 13px; font-weight: 530;
+  cursor: pointer; transition: all 0.25s; letter-spacing: 0.3px;
+  border-bottom: 2px solid transparent;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.panel-tab:hover { color: var(--text-secondary); }
+.panel-tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
+.panel-tab-icon { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.5; transition: opacity 0.2s; }
+.panel-tab.active .panel-tab-icon { opacity: 0.8; }
+.panel-tab:hover .panel-tab-icon { opacity: 0.6; }
+
+.panel-body { flex: 1; overflow-y: auto; padding: 18px 18px; }
+.panel-body > div {
+  animation: tabSwitch 0.3s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes tabSwitch {
+  from{opacity:0;transform:translateY(6px) scale(0.98)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+
+.agent-card { display: flex; align-items: center; gap: 14px; padding: 12px 0; cursor: pointer; transition: opacity 0.2s; }
+.agent-card:hover { opacity: 0.85; }
+.agent-avatar-s { width: 36px; height: 36px; flex-shrink: 0; }
+.agent-avatar-s svg { width: 100%; height: 100%; }
+.agent-info-s { flex: 1; min-width: 0; }
+.agent-name-s { font-size: 15px; font-weight: 550; color: var(--text-primary); }
+.agent-desc-s { font-size: 13px; color: var(--text-tertiary); margin-top: 3px; }
+.agent-status-s { display: flex; align-items: center; gap: 5px; font-size: 13px; flex-shrink: 0; }
+.agent-status-s.online { color: var(--color-green); }
+.agent-status-s.busy { color: var(--color-amber); }
+.agent-status-s.offline { color: var(--text-faint); }
+
+/* ── Config form ── */
+.config-group { margin-bottom: 16px; }
+.config-group-label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-tertiary); margin-bottom: 7px; font-weight: 620; }
+.config-label { font-size: 14px; color: var(--text-secondary); white-space: nowrap; }
+.config-select {
+  padding: 5px 9px; min-width: 0; flex-shrink: 0;
+  background: var(--bg-glass-hover); border: 1px solid var(--border-strong); border-radius: 7px;
+  color: var(--text-primary); font-size: 14px; outline: none;
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  max-width: 50%;
+}
+.config-select:focus { border-color: var(--accent-focus); }
+.config-input {
+  background: var(--bg-glass-hover); color: var(--text-primary);
+  border: 1px solid var(--border-strong); border-radius: 7px;
+  padding: 5px 9px; font-size: 14px; font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  width: 80px; text-align: right; outline: none; flex-shrink: 0;
+}
+.config-input:focus { border-color: var(--accent-focus); }
+.config-toggle {
+  position: relative; width: 38px; height: 22px; flex-shrink: 0;
+  background: var(--border-strong); border-radius: 11px;
+  cursor: pointer; transition: background 0.25s; border: none;
+}
+.config-toggle.on { background: var(--bg-accent-xstrong); }
+.config-toggle::after {
+  content: ''; position: absolute; top: 2.5px; left: 2.5px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--text-secondary); transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+}
+.config-toggle.on::after { transform: translateX(16px); background: #fff; }
+.config-slider-wrap { display: flex; align-items: center; gap: 8px; }
+.config-slider {
+  -webkit-appearance: none; appearance: none;
+  height: 3px; background: var(--bg-hover); border-radius: 2px;
+  outline: none; width: 90px;
+}
+.config-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #818cf8; cursor: pointer; transition: transform 0.15s;
+  box-shadow: 0 0 10px rgba(129,140,248,0.3);
+}
+.config-slider::-webkit-slider-thumb:active { transform: scale(1.2); }
+.config-val { font-size: 13px; color: var(--accent-text); font-family: 'SF Mono','Fira Code','Consolas',monospace; min-width: 26px; text-align: right; }
+.config-actions { display: flex; gap: 8px; margin-top: 16px; }
+.config-btn {
+  flex: 1; padding: 9px 0; border-radius: 8px;
+  font-size: 13px; font-weight: 520; cursor: pointer;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-glass); color: var(--text-tertiary);
+  transition: all 0.2s;
+}
+.config-btn:hover { background: var(--bg-glass-hover); color: var(--text-secondary); }
+.config-btn.primary { background: var(--accent-bg); border-color: var(--accent-border); color: var(--accent-text); }
+.config-btn.primary:hover { background: var(--accent-bg-hover); }
+.config-btn.danger { color: var(--color-red); border-color: rgba(239,68,68,0.2); }
+.config-btn.danger:hover { background: rgba(239,68,68,0.08); }
+
+.tool-card { display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 9px; border: 1px solid var(--border-light); background: var(--bg-card); margin-bottom: 8px; cursor: pointer; transition: all 0.15s; }
+.tool-card:hover { background: var(--bg-hover); }
+.tool-icon-s { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 7px; font-size: 15px; flex-shrink: 0; }
+.tool-info-s { flex: 1; min-width: 0; }
+.tool-name-s { font-size: 14px; font-weight: 540; color: var(--accent-text); font-family: 'SF Mono','Fira Code','Consolas',monospace; }
+.tool-desc-s { font-size: 13px; color: var(--text-tertiary); margin-top: 2px; }
+
+/* ── File Explorer ── */
+.file-breadcrumb {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  padding: 10px 0 12px; border-bottom: 1px solid var(--border-light);
+  margin-bottom: 10px; min-height: 40px;
+}
+.file-crumb {
+  font-size: 13px; color: var(--text-muted); cursor: pointer;
+  padding: 4px 7px; border-radius: 5px; transition: all 0.15s;
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+}
+.file-crumb:hover { color: var(--accent-text); background: var(--bg-active); }
+.file-crumb.last { color: var(--accent-text); cursor: default; }
+.file-crumb.last:hover { background: transparent; }
+.file-crumb-sep { color: var(--text-faint); font-size: 13px; }
+
+.file-entry {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; border-radius: 7px;
+  cursor: pointer; transition: all 0.12s;
+}
+.file-entry:hover { background: var(--bg-hover); }
+.file-entry.selected { background: var(--bg-active); }
+.file-entry-icon { font-size: 15px; width: 22px; text-align: center; flex-shrink: 0; }
+.file-entry-name { font-size: 15px; color: var(--text-primary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-entry-name.dir { color: var(--accent-text); font-weight: 540; }
+.file-entry-meta { font-size: 13px; color: var(--text-muted); flex-shrink: 0; }
+
+.file-preview { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 12px; }
+.file-preview-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
+}
+.file-preview-label {
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text-faint); font-weight: 620;
+}
+.file-preview-close {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-faint);
+  font-size: 14px; cursor: pointer; border-radius: 6px;
+}
+.file-preview-close:hover { background: var(--bg-glass-hover); color: var(--text-tertiary); }
+.file-preview-path {
+  font-size: 13px; color: var(--text-faint); margin-bottom: 10px;
+  font-family: 'SF Mono','Fira Code','Consolas',monospace; word-break: break-all;
+}
+
+.file-code-view {
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-size: 12.5px; line-height: 1.6;
+  background: var(--bg-code); border-radius: 9px;
+  overflow: hidden; border: 1px solid var(--border-light);
+}
+.file-code-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  background: var(--bg-glass);
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12px; color: var(--text-tertiary);
+}
+.file-code-body { display: flex; max-height: 360px; overflow-y: auto; }
+.file-line-nums {
+  padding: 10px 0; text-align: right; user-select: none;
+  border-right: 1px solid var(--border-light);
+  min-width: 42px; flex-shrink: 0;
+}
+.file-line-num { padding: 0 12px 0 0; color: var(--text-faint); font-size: 12px; }
+.file-code-content { padding: 10px 16px; flex: 1; overflow-x: auto; white-space: pre; color: var(--text-secondary); }
+.hl-key { color: var(--accent); }
+.hl-str { color: var(--color-amber); }
+.hl-fn { color: var(--color-green); }
+.hl-com { color: var(--text-faint); font-style: italic; }
+.hl-dec { color: var(--color-amber); }
+.hl-cls { color: var(--accent-text); }
+
+.welcome { text-align: center; padding: 80px 20px; }
+.welcome-icon { font-size: 52px; opacity: 0.08; margin-bottom: 20px; }
+.welcome-title { font-size: 22px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; letter-spacing: -0.01em; }
+.welcome-desc { font-size: 15px; color: var(--text-faint); line-height: 1.6; }
+
+/* ── Tree File Explorer ── */
+.fl-search {
+  margin-bottom: 12px; padding: 9px 14px; width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 9px;
+  color: var(--text-secondary); font-size: 13px; outline: none;
+}
+.fl-search::placeholder { color: var(--text-muted); }
+.fl-dir {
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 12px; cursor: pointer; border-radius: 6px;
+  font-size: 14px; color: var(--accent-text); font-weight: 540;
+  transition: all 0.12s; user-select: none;
+}
+.fl-dir:hover { background: var(--bg-active); }
+.fl-arrow { font-size: 13px; color: var(--text-faint); width: 16px; flex-shrink: 0; transition: transform 0.15s; }
+.fl-arrow.open { transform: rotate(90deg); }
+.fl-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 12px; cursor: pointer; border-radius: 6px;
+  font-size: 13px; color: var(--text-secondary);
+  transition: all 0.12s; white-space: nowrap;
+}
+.fl-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.fl-item.fl-sel { background: rgba(99,102,241,0.1); color: var(--accent-text); }
+.fl-icon { font-size: 14px; width: 20px; text-align: center; flex-shrink: 0; }
+
+/* ── Agent Groups ── */
+.agent-group { margin-bottom: 16px; }
+.agent-group-h {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 0 8px; cursor: pointer; user-select: none;
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.7px; font-weight: 620;
+  border-bottom: 1px solid var(--border-light); color: var(--text-tertiary);
+}
+.agent-group-h:hover { color: var(--text-tertiary); }
+.agent-group-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.agent-group-count {
+  font-size: 13px; font-weight: 400; margin-left: auto;
+  background: var(--bg-hover); padding: 0 8px; border-radius: 4px;
+  color: var(--text-faint);
+}
+
+/* ── Config Cards ── */
+.config-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 11px; padding: 16px 16px; margin-bottom: 12px;
+  border-left: 2px solid var(--border);
+  transition: border-color 0.2s;
+}
+.config-card:hover { border-left-color: var(--accent-border); }
+.config-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0;
+}
+.config-row + .config-row { border-top: 1px solid var(--border-light); }
+.config-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border-light);
+}
+.config-back-btn {
+  width: 28px; height: 28px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-glass-hover); border: 1px solid var(--border-light);
+  border-radius: 6px; color: var(--text-secondary); font-size: 15px;
+  cursor: pointer; transition: all 0.15s; line-height: 1;
+}
+.config-back-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.config-header-avatar { width: 32px; height: 32px; flex-shrink: 0; }
+.config-header-avatar svg { width: 100%; height: 100%; }
+.config-header-title { font-size: 15px; font-weight: 560; color: var(--text-primary); }
+.config-header-id { margin-left: auto; font-size: 11px; color: var(--text-faint); font-family: 'SF Mono','Fira Code','Consolas',monospace; }
+
+/* ── Tool Stats ── */
+.tool-usage { font-size: 13px; color: var(--text-faint); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.tool-usage-badge { background: var(--bg-hover); padding: 2px 7px; border-radius: 4px; font-family: 'SF Mono','Fira Code','Consolas',monospace; font-size: 12px; color: var(--text-muted); }
+
+/* ── Tools Groups ── */
+.tools-group { margin-bottom: 14px; }
+.tools-group-h {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 620; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text-tertiary); margin-bottom: 8px; padding: 0 2px;
+}
+.tools-type-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 2px 7px; border-radius: 4px; margin-left: auto;
+}
+.tools-type-badge.core { background: rgba(129,140,248,0.12); color: var(--accent-text); }
+.tools-type-badge.skill { background: rgba(251,191,36,0.12); color: #fbbf24; }
+.tools-type-badge.mcp { background: rgba(52,211,153,0.12); color: #34d399; }
+
+/* ── Resizer ── */
+.resizer {
+  width: 8px; min-width: 8px; cursor: col-resize;
+  background: transparent; position: relative; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.resizer::after {
+  content: ''; width: 2px; height: 36px;
+  background: var(--bg-input); border-radius: 1px;
+  transition: all 0.2s; flex-shrink: 0;
+}
+.resizer:hover::after, .resizer:active::after {
+  background: rgba(99,102,241,0.25); height: 52px;
+}
+.resizer:hover { background: var(--bg-surface); }
+
+/* ── Robot Animations ── */
+.robot-bob {
+  animation: robotBob 3s ease-in-out infinite;
+}
+@keyframes robotBob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.robot-wave {
+  animation: robotWave 1.8s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+@keyframes robotWave {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-14deg); }
+  40% { transform: rotate(12deg); }
+  60% { transform: rotate(-6deg); }
+  80% { transform: rotate(6deg); }
+}
+
+/* ── Thinking Panel ── */
+.thinking-panel {
+  align-self: flex-start; max-width: 85%; width: 100%;
+  animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+}
+.thinking-panel-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; cursor: pointer; user-select: none;
+  border-radius: 12px 12px 0 0;
+  background: rgba(129,140,248,0.08);
+  border: 1px solid rgba(129,140,248,0.15);
+  border-bottom: none;
+  transition: background 0.15s;
+}
+.thinking-panel-header:hover { background: rgba(129,140,248,0.13); }
+.thinking-panel-header-icon { width: 24px; height: 24px; flex-shrink: 0; }
+.thinking-panel-header-label { font-size: 13px; font-weight: 560; color: var(--accent); letter-spacing: 0.3px; }
+.thinking-panel-header-meta { margin-left: auto; font-size: 12px; color: var(--text-muted); font-family: 'SF Mono','Fira Code','Consolas',monospace; }
+.thinking-panel-header-arrow { font-size: 12px; color: var(--accent-text); transition: transform 0.2s; margin-left: 8px; }
+.thinking-panel-header-arrow.open { transform: rotate(180deg); }
+.thinking-panel-body {
+  border: 1px solid rgba(129,140,248,0.12);
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  background: var(--bg-overlay);
+  padding: 0; max-height: 400px; overflow-y: auto;
+}
+[data-theme="light"] .thinking-panel-body { background: rgba(255,255,255,0.45); border-color: rgba(129,140,248,0.18); }
+.thinking-panel-agent-group {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(129,140,248,0.06);
+  animation: chunkIn 0.3s ease both;
+}
+[data-theme="light"] .thinking-panel-agent-group { border-bottom-color: rgba(129,140,248,0.1); }
+.thinking-panel-agent-group:last-child { border-bottom: none; }
+.thinking-panel-agent-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.thinking-panel-agent-avatar { width: 18px; height: 18px; flex-shrink: 0; }
+.thinking-panel-agent-avatar svg { width: 100%; height: 100%; }
+.thinking-panel-agent-name {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  font-weight: 600; color: var(--accent-text);
+}
+.thinking-panel-chunk-text {
+  font-size: 13px; line-height: 1.65;
+  color: var(--text-secondary);
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  padding-left: 26px;
+}
+.thinking-panel-summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: rgba(129,140,248,0.06);
+  border: 1px solid rgba(129,140,248,0.12);
+  border-radius: 10px;
+  cursor: pointer; transition: background 0.15s;
+  animation: msgIn 0.3s cubic-bezier(0.16,1,0.3,1) both;
+}
+.thinking-panel-summary:hover { background: rgba(129,140,248,0.1); }
+.thinking-panel-summary-icon { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.7; }
+.thinking-panel-summary-text { font-size: 13px; color: var(--text-tertiary); }
+.thinking-panel-summary-expand { font-size: 12px; color: var(--accent-text); margin-left: auto; }
+
+.thinking-dots { display: flex; gap: 5px; }
+.thinking-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted);
+  animation: dotPulse 1.4s ease-in-out infinite;
+}
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.15; }
+  40% { transform: scale(1); opacity: 1; background: #818cf8; }
+}
+
+/* ── Status Progress Bar ── */
+.status-bar {
+  height: 2px; position: relative; overflow: hidden;
+  background: var(--bg-glass); flex-shrink: 0;
+}
+.status-bar-progress {
+  height: 100%; width: 28%;
+  background: linear-gradient(90deg, #6366f1, #818cf8, #6366f1);
+  background-size: 200% 100%;
+  animation: barSlide 1.6s ease-in-out infinite;
+  border-radius: 1px;
+}
+@keyframes barSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(450%); }
+}
+
+/* ── Status Badge ── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; padding: 4px 14px; border-radius: 13px;
+  font-weight: 530; letter-spacing: 0.3px;
+}
+.status-badge.online { background: rgba(52,211,153,0.08); color: var(--color-green); }
+.status-badge.completed { background: var(--bg-glass); color: var(--text-muted); }
+.status-badge.processing { background: var(--bg-active); color: var(--accent-text); }
+
+/* ── Streaming Cursor ── */
+.stream-cursor {
+  display: inline-block; width: 2px; height: 18px;
+  background: var(--text-secondary);
+  animation: blinkCursor 0.7s step-end infinite;
+  vertical-align: text-bottom; margin-left: 2px;
+}
+@keyframes blinkCursor { 50% { opacity: 0; } }
+
+/* ── Agent Message with Avatar ── */
+.msg-agent-wrap {
+  display: flex; gap: 12px; align-items: flex-start;
+  align-self: flex-start; max-width: 85%;
+  animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+}
+.msg-avatar-col {
+  display: flex; flex-direction: column; align-items: center;
+  width: 32px; flex-shrink: 0; position: relative;
+}
+.msg-avatar-icon { width: 32px; height: 32px; }
+.msg-avatar-state {
+  position: absolute; bottom: -2px; right: -2px;
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid var(--avatar-border);
+}
+.msg-avatar-state.streaming { background: var(--accent); box-shadow: 0 0 10px rgba(129,140,248,0.6); animation: avatarPulse 0.8s ease-in-out infinite; }
+.msg-avatar-state.done { background: #34d399; }
+@keyframes avatarPulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.35);opacity:0.6} }
+
+.msg-agent-bubble {
+  flex: 1; min-width: 0;
+  padding: 13px 20px; border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-glass);
+  border-bottom-left-radius: 5px;
+  border-left: 4px solid var(--accent,rgba(255,255,255,0.15));
+  display: flex; flex-direction: column;
+}
+.msg-agent-header {
+  display: flex; align-items: center; gap: 7px; margin-bottom: 6px;
+}
+.msg-agent-name {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px;
+  font-weight: 620; color: var(--accent-text);
+}
+.msg-state-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 5px;
+  margin-left: auto; font-weight: 400; letter-spacing: 0.3px;
+}
+.msg-state-badge.streaming { background: rgba(129,140,248,0.1); color: var(--accent); animation: badgePulse 1.2s ease-in-out infinite; }
+.msg-state-badge.done { background: rgba(52,211,153,0.08); color: var(--color-green); }
+[data-theme="light"] .msg-state-badge.streaming { background: rgba(129,140,248,0.12); }
+[data-theme="light"] .msg-state-badge.done { background: rgba(52,211,153,0.1); }
+@keyframes badgePulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* ── Message done transition ── */
+.msg-agent-bubble.done-anim {
+  animation: bubbleDone 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes bubbleDone {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.015); }
+  100% { transform: scale(1); }
+}
+
+/* ── Task Board ── */
+.task-board {
+  align-self: flex-start; max-width: 85%; width: 100%;
+  margin: 8px 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 14px; padding: 16px 16px;
+  animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.task-board-hdr {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-secondary); font-weight: 560;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+.task-board-hdr svg { width: 20px; height: 20px; }
+
+.task-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 10px;
+  margin-bottom: 6px; transition: all 0.3s;
+  border: 1px solid transparent;
+}
+.task-item.running { background: rgba(129,140,248,0.06); border-color: rgba(129,140,248,0.15); }
+.task-item.completed { background: rgba(52,211,153,0.04); border-color: rgba(52,211,153,0.1); }
+[data-theme="light"] .task-item.running { background: rgba(129,140,248,0.08); border-color: rgba(129,140,248,0.2); }
+[data-theme="light"] .task-item.completed { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.15); }
+
+.task-item-icon { width: 24px; height: 24px; flex-shrink: 0; }
+.task-item-icon svg { width: 100%; height: 100%; }
+.task-item-info { flex: 1; min-width: 0; }
+.task-item-name { font-size: 14px; font-weight: 530; color: var(--text-primary); }
+.task-item-bar {
+  margin-top: 6px; height: 4px; border-radius: 2px;
+  background: var(--bg-hover); overflow: hidden;
+}
+.task-item-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.5s ease, background 0.3s, opacity 0.3s;
+}
+.task-item-fill.running {
+  width: 0%;
+  background: linear-gradient(90deg, #818cf8, #6366f1);
+  animation: taskProgress 1.8s ease-in-out forwards;
+}
+.task-item-fill.completed { width: 100%; background: #34d399; }
+@keyframes taskProgress {
+  0% { width: 5%; opacity: 0.6; }
+  50% { width: 65%; opacity: 1; }
+  100% { width: 45%; opacity: 0.8; }
+}
+
+.task-item-status {
+  font-size: 12px; font-weight: 540; flex-shrink: 0;
+  padding: 4px 10px; border-radius: 6px; letter-spacing: 0.3px;
+}
+.task-item-status.pending { color: var(--text-faint); }
+.task-item-status.running { color: var(--accent); background: rgba(129,140,248,0.08); }
+.task-item-status.completed { color: var(--color-green); background: rgba(52,211,153,0.08); }
+
+/* ── Monitor Panel ── */
+.monitor-section {
+  margin-bottom: 16px;
+}
+.monitor-section-title {
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-tertiary); margin-bottom: 8px; font-weight: 650;
+}
+.monitor-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 11px; padding: 14px 16px; margin-bottom: 10px;
+  border-left: 2px solid var(--mc-color,var(--border));
+}
+.monitor-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--border-light);
+}
+.monitor-row:last-child { border-bottom: none; }
+.monitor-label {
+  font-size: 14px; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 7px;
+}
+.monitor-label-icon { width: 16px; height: 16px; flex-shrink: 0; }
+.monitor-label-icon svg { width: 100%; height: 100%; }
+.monitor-value {
+  font-size: 14px; color: var(--text-primary);
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-weight: 500;
+}
+.monitor-value.accent { color: var(--accent-text); }
+.monitor-bar-wrap { height: 4px; background: var(--bg-hover); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.monitor-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.monitor-bar-fill.thinking { background: linear-gradient(90deg,#818cf8,#6366f1); }
+.monitor-bar-fill.tool { background: linear-gradient(90deg,#818cf8,#6366f1); }
+.monitor-bar-fill.response { background: linear-gradient(90deg,#818cf8,#6366f1); }
+.monitor-agent-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border-light);
+}
+.monitor-agent-row:last-child { border-bottom: none; }
+.monitor-agent-icon { width: 28px; height: 28px; flex-shrink: 0; }
+.monitor-agent-icon svg { width: 100%; height: 100%; }
+.monitor-agent-info { flex: 1; min-width: 0; }
+.monitor-agent-name { font-size: 15px; font-weight: 560; color: var(--text-secondary); }
+.monitor-agent-tokens { font-size: 14px; font-weight: 550; color: var(--text-muted); margin-top: 2px; }
+.monitor-agent-right { text-align: right; flex-shrink: 0; }
+.monitor-agent-total { font-size: 14px; font-weight: 600; color: var(--accent-text); font-family: 'SF Mono','Fira Code','Consolas',monospace; }
+.monitor-agent-ms { font-size: 14px; font-weight: 500; color: var(--text-muted); }
+
+/* ── Monitor Tasks ── */
+.monitor-task-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border-light);
+}
+.monitor-task-row:last-child { border-bottom: none; }
+.monitor-task-icon { width: 22px; height: 22px; flex-shrink: 0; }
+.monitor-task-icon svg { width: 100%; height: 100%; }
+.monitor-task-info { flex: 1; min-width: 0; }
+.monitor-task-name { font-size: 13px; font-weight: 520; color: var(--text-secondary); }
+.monitor-task-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease, background 0.3s; }
+.monitor-task-fill.pending { width: 0%; }
+.monitor-task-fill.running {
+  width: 45%;
+  background: linear-gradient(90deg, #34d399, #10b981);
+  animation: taskProgress 1.8s ease-in-out forwards;
+}
+.monitor-task-fill.completed { width: 100%; background: #34d399; }
+.monitor-task-status {
+  font-size: 11px; font-weight: 530; flex-shrink: 0;
+  padding: 2px 8px; border-radius: 4px;
+}
+.monitor-task-status.pending { color: var(--text-faint); }
+.monitor-task-status.running { color: #34d399; background: rgba(52,211,153,0.08); }
+.monitor-task-status.completed { color: #34d399; background: rgba(52,211,153,0.08); }
+
+/* ── Theme Toggle ── */
+.theme-toggle {
+  width: 32px; height: 32px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-hover); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-tertiary); cursor: pointer; transition: all 0.2s;
+  font-size: 15px; margin-right: -4px;
+}
+.theme-toggle:hover { background: var(--bg-glass-hover); color: var(--text-secondary); }
+.theme-toggle:active { transform: scale(0.88); }
+
+/* ── File Drawer (side panel) ── */
+.file-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  z-index: 100;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: -4px 0 24px rgba(0,0,0,0.2);
+  display: flex; flex-direction: column;
+  animation: drawerIn 0.3s cubic-bezier(0.16,1,0.3,1) both;
+}
+.file-drawer-resizer {
+  position: absolute; left: -4px; top: 0; bottom: 0;
+  width: 8px; cursor: col-resize; z-index: 101;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.file-drawer-resizer::after {
+  content: ''; width: 2px; height: 36px;
+  background: var(--bg-input); border-radius: 1px;
+  transition: all 0.2s;
+}
+.file-drawer-resizer:hover::after, .file-drawer-resizer:active::after {
+  background: rgba(99,102,241,0.35); height: 52px;
+}
+.file-drawer-resizer:hover { background: rgba(99,102,241,0.05); }
+.file-drawer-content { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.file-drawer-tree {
+  width: 220px; min-width: 160px; flex-shrink: 0;
+  border-right: 1px solid var(--border-light);
+  background: var(--bg-glass);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.file-drawer-tree-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+.file-drawer-tree-title {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-tertiary);
+  display: flex; align-items: center; gap: 6px;
+}
+.file-drawer-tree-select {
+  padding: 4px 8px; font-size: 11px; font-weight: 500;
+  background: var(--accent-bg); border: 1px solid var(--border-accent);
+  border-radius: 5px; color: var(--accent-text); cursor: pointer;
+  transition: all 0.15s;
+}
+.file-drawer-tree-select:hover { background: var(--accent-bg-hover); }
+.file-drawer-tree-body {
+  flex: 1; overflow-y: auto; padding: 6px 0;
+}
+.file-drawer-tree-resizer {
+  width: 4px; cursor: col-resize; flex-shrink: 0;
+  background: transparent; transition: background 0.15s;
+  position: relative;
+}
+.file-drawer-tree-resizer:hover { background: rgba(99,102,241,0.2); }
+.file-drawer-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+@keyframes drawerIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
+.file-drawer-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-glass);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.file-drawer-tabs {
+  display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto;
+}
+.file-drawer-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 7px;
+  font-size: 12px; font-weight: 520; cursor: pointer;
+  white-space: nowrap; transition: all 0.15s;
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-tertiary);
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+}
+.file-drawer-tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.file-drawer-tab.active { background: var(--accent-bg); border-color: var(--border-accent); color: var(--accent-text); }
+.file-drawer-tab-close {
+  width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-faint);
+  font-size: 11px; cursor: pointer; border-radius: 3px; line-height: 1;
+}
+.file-drawer-tab-close:hover { background: rgba(239,68,68,0.15); color: var(--color-red); }
+.file-drawer-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.file-drawer-btn {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-faint);
+  font-size: 13px; cursor: pointer; border-radius: 6px;
+  transition: all 0.15s;
+}
+.file-drawer-btn:hover { background: var(--bg-glass-hover); color: var(--text-secondary); }
+.file-drawer-close:hover { color: var(--color-red); }
+.file-drawer-search-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-overlay); flex-shrink: 0;
+}
+.file-drawer-search-input {
+  flex: 1; padding: 5px 10px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-secondary); font-size: 13px; outline: none;
+}
+.file-drawer-search-input::placeholder { color: var(--text-muted); }
+.file-drawer-search-input:focus { border-color: var(--accent-focus); }
+.file-drawer-search-nav { display: flex; align-items: center; gap: 2px; }
+.file-drawer-search-nav button {
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-faint);
+  font-size: 12px; cursor: pointer; border-radius: 4px;
+}
+.file-drawer-search-nav button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.file-drawer-search-info { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.file-drawer-lang {
+  font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0;
+  background: var(--bg-hover); color: var(--text-tertiary);
+}
+.file-drawer-lang.py { background: rgba(52,211,153,0.1); color: var(--color-green); }
+.file-drawer-lang.md { background: var(--accent-bg); color: var(--accent-text); }
+.file-drawer-lang.toml { background: rgba(251,191,36,0.1); color: var(--color-amber); }
+.file-drawer-lang.json { background: rgba(129,140,248,0.1); color: var(--accent-text); }
+.file-drawer-body {
+  display: flex; flex: 1; overflow-y: auto; min-height: 0;
+  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-size: 14px; line-height: 1.6;
+  background: var(--bg-code);
+}
+.file-drawer-nums {
+  padding: 10px 0; text-align: right; user-select: none;
+  border-right: 1px solid var(--border-light);
+  min-width: 48px; flex-shrink: 0;
+}
+.file-drawer-num { padding: 0 14px 0 0; color: var(--text-faint); font-size: 13px; }
+.file-drawer-num.match { color: var(--accent); font-weight: 600; }
+.file-drawer-num.current { color: #fbbf24; font-weight: 700; }
+.file-drawer-code { padding: 10px 16px; flex: 1; overflow-x: auto; white-space: pre; color: var(--text-secondary); min-width: 0; }
+.file-drawer-line { transition: background 0.15s; }
+.file-drawer-line.match { background: rgba(99,102,241,0.08); margin: 0 -16px; padding: 0 16px; }
+.file-drawer-line.current { background: rgba(251,191,36,0.12); margin: 0 -16px; padding: 0 16px; }
+.file-drawer-empty {
+  padding: 30px; text-align: center; color: var(--text-muted); font-size: 12px;
+}
+.file-drawer-overlay {
+  position: fixed; inset: 0; z-index: 99;
+  background: rgba(0,0,0,0.15);
+}
+
+@media (max-width:1200px){ .right-panel{width:320px;min-width:320px} .sidebar{width:270px;min-width:270px} }
+
+/* ── Queued Input ── */
+.input-bar.queued input { opacity: 0.7; }
+.input-bar.queued .send-hint {
+  position: absolute; right: 70px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; color: var(--accent-text); pointer-events: none;
+  animation: hintPulse 1.5s ease-in-out infinite;
+}
+@keyframes hintPulse { 0%,100%{opacity:0.6} 50%{opacity:1} }
+
+/* ── Hover Delete Button ── */
+.conv-item .conv-hover-delete {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-faint);
+  font-size: 13px; cursor: pointer; border-radius: 5px;
+  opacity: 0; transition: all 0.15s;
+}
+.conv-item:hover .conv-hover-delete { opacity: 1; }
+.conv-item .conv-hover-delete:hover { background: rgba(239,68,68,0.1); color: var(--color-red); }
+
+/* ── Reduced Motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .chat-messages { scroll-behavior: auto; }
+}
+.chat-messages { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<div class="bg-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useCallback, useRef, useEffect } = React;
+
+/* ── Robot Avatars ── */
+const ROBOTS = {
+  supervisor: (<svg viewBox="0 0 48 48"><rect x="13" y="12" width="22" height="20" rx="6" fill="#6366f1" opacity=".9"/><circle cx="20" cy="20" r="2.5" fill="#fff"/><circle cx="28" cy="20" r="2.5" fill="#fff"/><circle cx="20" cy="20" r="5" fill="none" stroke="rgba(255,255,255,.3)" strokeWidth="1.5"/><circle cx="28" cy="20" r="5" fill="none" stroke="rgba(255,255,255,.3)" strokeWidth="1.5"/><line x1="25" y1="20" x2="23" y2="20" stroke="rgba(255,255,255,.3)" strokeWidth="1.5"/><path d="M20 27 Q24 30, 28 27" fill="none" stroke="rgba(255,255,255,.8)" strokeWidth="1.5" strokeLinecap="round"/><rect x="11" y="18" width="2" height="6" rx="1" fill="#6366f1" opacity=".7"/><rect x="35" y="18" width="2" height="6" rx="1" fill="#6366f1" opacity=".7"/></svg>),
+  coder: (<svg viewBox="0 0 48 48"><rect x="13" y="10" width="22" height="18" rx="5" fill="#34d399" opacity=".8"/><rect x="16" y="13" width="16" height="12" rx="2" fill="#0a0a1a" opacity=".5"/><text x="24" y="20" textAnchor="middle" fill="#34d399" fontSize="7" fontFamily="monospace">&lt;/&gt;</text><circle cx="20" cy="18" r="1" fill="#34d399"/><circle cx="28" cy="18" r="1" fill="#34d399"/><line x1="24" y1="10" x2="24" y2="5" stroke="#34d399" strokeWidth="1.5" opacity=".6"/><circle cx="24" cy="4" r="1.8" fill="#34d399" opacity=".8"/></svg>),
+  researcher: (<svg viewBox="0 0 48 48"><rect x="15" y="13" width="18" height="17" rx="7" fill="#fbbf24" opacity=".85"/><circle cx="21" cy="20" r="3.5" fill="#fff"/><circle cx="27" cy="20" r="3.5" fill="#fff"/><circle cx="21" cy="20" r="1.8" fill="#0a0a1a"/><circle cx="27" cy="20" r="1.8" fill="#0a0a1a"/><circle cx="36" cy="36" r="7" fill="none" stroke="#fbbf24" strokeWidth="2" opacity=".4"/><line x1="41" y1="41" x2="45" y2="45" stroke="#fbbf24" strokeWidth="2" opacity=".4" strokeLinecap="round"/><path d="M21 27 Q24 29, 27 27" fill="none" stroke="rgba(255,255,255,.9)" strokeWidth="1.2" strokeLinecap="round"/></svg>),
+  analyst: (<svg viewBox="0 0 48 48"><rect x="14" y="12" width="20" height="16" rx="6" fill="#fb7185" opacity=".85"/><circle cx="24" cy="19" r="3" fill="#fff"/><circle cx="24" cy="19" r="1.5" fill="#0a0a1a"/><rect x="15" y="6" width="4" height="8" rx="1" fill="#fb7185" opacity=".6"/><rect x="21" y="4" width="4" height="10" rx="1" fill="#fb7185" opacity=".8"/><rect x="27" y="7" width="4" height="7" rx="1" fill="#fb7185" opacity=".6"/><path d="M21 25 L24 27 L27 25" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/><circle cx="14" cy="22" r="1.2" fill="rgba(255,255,255,.3)"/><circle cx="34" cy="22" r="1.2" fill="rgba(255,255,255,.3)"/></svg>),
+  helper: (<svg viewBox="0 0 48 48"><rect x="15" y="14" width="18" height="15" rx="7" fill="#a78bfa" opacity=".85"/><circle cx="20" cy="20" r="3.5" fill="#fff"/><circle cx="28" cy="20" r="3.5" fill="#fff"/><circle cx="20" cy="20" r="1.5" fill="#0a0a1a"/><circle cx="28" cy="20" r="1.5" fill="#0a0a1a"/><circle cx="16" cy="24" r="2.5" fill="#a78bfa" opacity=".2"/><circle cx="32" cy="24" r="2.5" fill="#a78bfa" opacity=".2"/><path d="M24 14 L24 10 Q24 6, 21 7 Q18 8, 21 10 L24 14" fill="#f472b6" opacity=".7"/><path d="M21 26 Q24 29, 27 26" fill="none" stroke="rgba(255,255,255,.85)" strokeWidth="1.2" strokeLinecap="round"/></svg>),
+};
+function getRobot(t) { return ROBOTS[t] || ROBOTS.helper; }
+
+/* ── Data ── */
+const CONVERSATIONS = [
+  { id:'c0', name:'实时多 Agent 分析', robot:'supervisor', preview:'正在协同分析中...', time:'刚刚', unread:0, status:'processing' },
+  { id:'c1', name:'代码重构讨论', robot:'coder', preview:'看看 agent.py 里的工具注册逻辑...', time:'5m', unread:2, status:'active' },
+  { id:'c2', name:'架构设计评审', robot:'supervisor', preview:'Supervisor 路由策略需要调整', time:'18m', unread:0, status:'active' },
+  { id:'c3', name:'数据分析查询', robot:'analyst', preview:'工具调用成功率 94.2%', time:'1h', unread:1, status:'completed' },
+  { id:'c4', name:'知识库研究', robot:'researcher', preview:'ChromaDB v3.8 多模态检索', time:'2h', unread:0, status:'completed' },
+  { id:'c5', name:'日常助手', robot:'helper', preview:'明天的日程已整理好', time:'3h', unread:0, status:'completed' },
+];
+
+const MESSAGES = {
+  c0: [
+    { role:'user', text:'分析项目架构并给出优化建议' },
+    { role:'agent', agent:'supervisor', text:'开始分析项目结构...', ref:'src/agent/agent.py' },
+  ],
+  c1: [
+    { role:'user', text:'分析 agent.py 中 tool registration 的流程，关注 execute_code 安全检查' },
+    { role:'agent', agent:'coder', text:'读取相关文件来分析。', ref:'src/agent/agent.py' },
+    { role:'agent', agent:'coder', text:'在 agent.py:312-345，execute_code 做了三件事：\n1. 模式匹配 — DANGEROUS_SHELL_PATTERNS\n2. 参数校验\n3. 沙箱隔离\nsupervisor.py 也有相关逻辑。', ref:'src/agent/supervisor.py' },
+  ],
+  c2: [
+    { role:'agent', agent:'supervisor', text:'梳理架构设计方案，有几个决策点需要确认。', ref:'docs/architecture-features.md' },
+    { role:'user', text:'说说 dual execution path 的设计思路' },
+    { role:'agent', agent:'supervisor', text:'两条路径共享 tools 和 memory：\nManual ReAct loop — 直接 OpenAI SDK 取 reasoning_content\nLangGraph StateGraph — LangChain 原生图编排', ref:'src/agent/agent.py' },
+  ],
+  c3: [
+    { role:'user', text:'跑一下 Q2 工具调用数据，看各 agent 表现' },
+    { role:'agent', agent:'analyst', text:'数据汇总完毕。', ref:'docs/analysis/q2-report.md' },
+  ],
+  c4: [
+    { role:'user', text:'研究 ChromaDB 最新版本的向量检索能力' },
+    { role:'agent', agent:'researcher', text:'ChromaDB v3.8 主要更新如下。', ref:'docs/research/chromadb-v3.8.md' },
+  ],
+  c5: [
+    { role:'agent', agent:'helper', text:'明天的日程：\n- 10:00 团队站会\n- 14:00 架构评审会\n- 16:30 代码 Review' },
+  ],
+};
+
+/* ── File System (mock) ── */
+const FILE_TREE = {
+  '': ['src/', 'docs/', 'tests/', 'memory/', 'pyproject.toml', 'server.py', 'AGENTS.md'],
+  'src': ['agent/', ''],
+  'src/agent': ['agent.py', 'supervisor.py', 'config.py', 'graph.py', 'models.py', '__init__.py'],
+  'docs': ['architecture-features.md', 'analysis/', 'research/', 'agent-flow-design.md'],
+  'docs/analysis': ['q2-report.md', 'q1-report.md'],
+  'docs/research': ['chromadb-v3.8.md', 'langgraph-v0.3.md'],
+  'tests': ['test_agent.py', 'test_graph.py', 'conftest.py'],
+  'memory': ['sessions.db', 'chroma/'],
+};
+
+const FILE_CONTENT = {
+  'src/agent/agent.py': [
+    [1,'from __future__ import annotations','kw'],[2,'import re','kw'],[3,'from typing import Any','kw'],[4,''],[5,'DANGEROUS_SHELL_PATTERNS = [',''],[6,'    re.compile(r\'rm\\\\s+-rf\'),','str'],[7,'    re.compile(r\'mkfs\\.\\w+\'),','str'],[8,'    re.compile(r\':\\(\\)\\{:\\|:&;:\\:\'),','str'],[9,'    re.compile(r\'dd\\\\s+if=\'),','str'],[10,'    re.compile(r\'>\\\\s*/dev/sda\'),','str'],[11,'    re.compile(r\'wget\\\\s+.*\\\\|\\\\s*bash\'),','str'],[12,'    re.compile(r\'curl\\\\s+.*\\\\|\\\\s*bash\'),','str'],[13,'\]',''],[14,''],[15,'class Agent:','cls'],[16,'    """Manual ReAct loop — two-call pattern per turn."""','com'],[17,''],[18,'    def __init__(self, config: AgentConfig):','fn'],[19,'        self.config = config'],[20,'        self.tools = self._register_tools()'],[21,''],[22,'    def _register_tools(self):','fn'],[23,'        """Register built-in + custom tools."""','com'],[24,'        tools = ['],[25,'            ToolSpec("execute_code", self._exec_code, ...),'],[26,'            ToolSpec("web_search", self._web_search, ...),'],[27,'            ToolSpec("read_file", self._read_file, ...),'],[28,'            ToolSpec("write_file", self._write_file, ...),'],[29,'        ]'],[30,'        return {t.name: t for t in tools}'],[31,''],[32,'    async def _exec_code(self, code: str, timeout: int = 30):','fn'],[33,'        """Sandboxed code execution with pattern matching."""','com'],[34,'        for pattern in DANGEROUS_SHELL_PATTERNS:'],[35,'            if pattern.search(code):'],[36,'                return {"error": "Dangerous command detected"}','str'],[37,'        ...'],[38,''],
+  ],
+  'src/agent/supervisor.py': [
+    [1,'from langgraph.graph import StateGraph','kw'],[2,'from langgraph.prebuilt import create_react_agent','kw'],[3,''],[4,'class CustomSupervisor:','cls'],[5,'    """Four-phase: think → plan → dispatch → summarize."""','com'],[6,''],[7,'    SUB_AGENTS = {'],[8,'        "coder": create_react_agent(tools=[...]),'],[9,'        "researcher": create_react_agent(tools=[...]),'],[10,'        "analyst": create_react_agent(tools=[...]),'],[11,'    }'],[12,''],[13,'    async def route(self, task: str):','fn'],[14,'        plan = await self._think_and_plan(task)'],[15,'        if plan.is_trivial:'],[16,'            return await self._direct_exec(plan)'],[17,'        results = await asyncio.gather('],[18,'            *[self._dispatch(name, plan[name])'],[19,'              for name in plan.agents_needed]'],[20,'        )'],[21,'        return await self._summarize(results)'],[22,''],
+  ],
+  'src/agent/config.py': [
+    [1,'from pydantic import BaseModel, Field','kw'],[2,'class AgentConfig(BaseModel):','cls'],[3,'    model_name: str = Field(default="deepseek-v4-flash-free")','str'],[4,'    max_tokens: int = Field(default=8192)','dec'],[5,'    temperature: float = Field(default=0.7)','dec'],[6,'    enable_thinking: bool = Field(default=False)'],[7,'    session_ttl_hours: int = Field(default=24)','dec'],[8,'    failure_threshold: int = Field(default=5)','dec'],[9,'    recovery_timeout: int = Field(default=60)','dec'],[10,'    debug_mode: bool = Field(default=False)'],[11,'    audit_logging: bool = Field(default=True)'],[12,''],
+  ],
+  'src/agent/graph.py': [[1,'# LangGraph StateGraph workflow','com'],[2,'from langgraph.graph import StateGraph, END','kw'],[3,'from langgraph.checkpoint import MemorySaver','kw'],[4,''],[5,'def create_graph():','fn'],[6,'    """Build the LangGraph state graph."""','com'],[7,'    workflow = StateGraph(AgentState)'],[8,'    workflow.add_node("agent", call_model)'],[9,'    workflow.add_node("tools", tool_node)'],[10,'    workflow.set_entry_point("agent")'],[11,'    workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})'],[12,'    workflow.add_edge("tools", "agent")'],[13,'    return workflow.compile()'],[14,'']],
+  'src/agent/models.py': [[1,'# Model configurations','com'],[2,'MODEL_CONFIGS = {',''],[3,'    "deepseek-v4": {"model": "deepseek-v4-flash-free", "max_tokens": 8192},','str'],[4,'    "gpt-4o": {"model": "gpt-4o", "max_tokens": 4096},','str'],[5,'}','']],
+  'src/agent/__init__.py': [[1,'from .agent import Agent','kw'],[2,'from .supervisor import CustomSupervisor','kw'],[3,'from .config import AgentConfig','kw'],[4,'from .graph import create_graph','kw'],[5,'']],
+  'docs/architecture-features.md': [[1,'# Architecture Highlights'],[2,''],[3,'## Dual Execution Paths'],[4,'- Manual ReAct loop (agent.py): Custom OpenAI client'],[5,'- LangGraph StateGraph (graph.py): LangChain-native graph'],[6,''],[7,'## Multi-Agent Supervisor',''],[8,'Custom CustomSupervisor: think → plan → dispatch → summarize'],[9,''],[10,'## Memory System'],[11,'- SQLite for structured session persistence'],[12,'- ChromaDB for vector search'],[13,'- Dual-write pattern']],
+  'docs/analysis/q2-report.md': [[1,'# Q2 Agent Performance'],[2,''],[3,'| Agent | Success Rate | Calls |'],[4,'|--------|-------------|------|'],[5,'| Supervisor | 97.2% | 1,847 |'],[6,'| Coder | 94.1% | 3,211 |'],[7,'| Researcher | 89.5% | 2,456 |'],[8,'| Analyst | 95.8% | 1,602 |'],[9,'| Helper | 98.3% | 4,823 |'],[10,'']],
+  'docs/research/chromadb-v3.8.md': [[1,'# ChromaDB v3.8 Research'],[2,''],[3,'- Multi-modal retrieval (text + image)'],[4,'- HNSW index ~40% faster'],[5,'- New metadata filter DSL'],[6,'- API backwards compatible'],[7,'']],
+  'AGENTS.md': [[1,'# AGENTS.md — LangGraph Agent v2'],[2,''],[3,'## Two execution paths',''],[4,'| Path | File | Used by |'],[5,'|------|------|---------|'],[6,'| Manual ReAct | src/agent/agent.py | server.py /chat |'],[7,'| LangGraph StateGraph | src/agent/graph.py | Standalone |'],[8,'']],
+};
+
+function hl(txt, type) {
+  if (!type) return txt;
+  const m = { kw:'hl-key', str:'hl-str', fn:'hl-fn', com:'hl-com', dec:'hl-dec', cls:'hl-cls' };
+  return <span className={m[type]||''}>{txt}</span>;
+}
+
+/* ── Config ── */
+const DEFAULT_AGENT_CONFIGS = {
+  supervisor: { model:'deepseek-v4-flash-free', maxTokens:8192, temperature:0.7, enableThinking:false, sessionTTL:24, failureThreshold:5, recoveryTimeout:60, debugMode:false, auditLogging:true },
+  coder: { model:'deepseek-v4-flash-free', maxTokens:16384, temperature:0.4, enableThinking:true, sessionTTL:4, failureThreshold:5, recoveryTimeout:60, debugMode:false, auditLogging:true },
+  researcher: { model:'deepseek-v4-flash-free', maxTokens:8192, temperature:0.3, enableThinking:true, sessionTTL:2, failureThreshold:8, recoveryTimeout:120, debugMode:false, auditLogging:true },
+  analyst: { model:'deepseek-v4-flash-free', maxTokens:8192, temperature:0.5, enableThinking:false, sessionTTL:48, failureThreshold:3, recoveryTimeout:30, debugMode:false, auditLogging:true },
+  helper: { model:'deepseek-v4-flash-free', maxTokens:4096, temperature:0.8, enableThinking:false, sessionTTL:24, failureThreshold:5, recoveryTimeout:30, debugMode:false, auditLogging:false },
+};
+
+const AGENT_LIST = [
+  { id:'supervisor', name:'Supervisor', type:'supervisor', status:'online', desc:'会话路由 & 编排' },
+  { id:'coder', name:'Coder', type:'coder', status:'online', desc:'代码生成 & 调试' },
+  { id:'researcher', name:'Researcher', type:'researcher', status:'busy', desc:'信息检索 & 分析' },
+  { id:'analyst', name:'Analyst', type:'analyst', status:'online', desc:'数据洞察 & 报告' },
+  { id:'helper', name:'Helper', type:'helper', status:'offline', desc:'日常任务助理' },
+];
+
+const TOOLS_LIST = [
+  { id:'t1', name:'execute_code', desc:'沙箱代码执行', icon:'▶', color:'#818cf8', type:'core', usage:312, lastUsed:'2m前' },
+  { id:'t2', name:'web_search', desc:'网络信息检索', icon:'🌐', color:'#818cf8', type:'core', usage:87, lastUsed:'15m前' },
+  { id:'t3', name:'read_file', desc:'读取文件内容', icon:'📄', color:'#818cf8', type:'core', usage:156, lastUsed:'5m前' },
+  { id:'t4', name:'write_file', desc:'写入文件', icon:'✏', color:'#818cf8', type:'core', usage:43, lastUsed:'1h前' },
+  { id:'t5', name:'vector_search', desc:'向量记忆检索', icon:'🔍', color:'#818cf8', type:'core', usage:28, lastUsed:'3h前' },
+  { id:'t6', name:'fetch_webpage', desc:'网页内容抓取与解析', icon:'📡', color:'#818cf8', type:'skill', usage:19, lastUsed:'10m前' },
+  { id:'t7', name:'git_operations', desc:'Git 版本控制操作', icon:'🔧', color:'#818cf8', type:'skill', usage:12, lastUsed:'1h前' },
+  { id:'t8', name:'filesystem_mcp', desc:'文件系统 MCP 服务', icon:'🗂', color:'#818cf8', type:'mcp', usage:8, lastUsed:'2h前' },
+  { id:'t9', name:'search_mcp', desc:'搜索引擎 MCP 服务', icon:'🔎', color:'#818cf8', type:'mcp', usage:5, lastUsed:'4h前' },
+];
+
+const AGENT_COLORS = { supervisor:'#818cf8', coder:'#818cf8', researcher:'#818cf8', analyst:'#818cf8', helper:'#818cf8' };
+
+/* ── Mock thinking chunks ── */
+const THINKING_CHUNKS_MOCK = [
+  { agent:'supervisor', text:'分析用户意图：用户在询问 tool registration 流程，需要重点解析 execute_code 的安全检查机制。' },
+  { agent:'supervisor', text:'拆解任务：1) 定位 agent.py 中的工具注册逻辑 2) 分析 DANGEROUS_SHELL_PATTERNS 3) 检查沙箱隔离实现 4) 关联 supervisor.py 中的相关代码。' },
+  { agent:'coder', text:'正在扫描 agent.py:300-400 的 execute_code 方法… 发现模式匹配逻辑位于 312-345 行。' },
+  { agent:'coder', text:'DANGEROUS_SHELL_PATTERNS 包含 7 个危险命令模式，涵盖 rm -rf、mkfs、fork bomb、dd、wget|bash 等。' },
+  { agent:'coder', text:'参数校验：timeout 默认 30s，超过后 SIGKILL 进程组。沙箱使用 subprocess 配合容器隔离。' },
+  { agent:'supervisor', text:'所有子任务完成，汇总结果准备回复。' },
+];
+
+/* ── Components ── */
+
+function ConvAvatar({ type, size }) {
+  return <div className="conv-avatar-wrap" style={{width:size||40,height:size||40}}>{getRobot(type)}</div>;
+}
+
+function FileRef({ path, onClick }) {
+  return <span className="file-ref" onClick={()=>onClick(path)}><span>📄</span> {path}</span>;
+}
+
+const ChatMessage = React.memo(function ChatMessage({ msg, onFileClick, style, isStreaming, onComplete }) {
+  const [doneAnim, setDoneAnim] = useState(false);
+  const parts = useMemo(() => {
+    if (!msg.ref) return [{ t:'text', v:msg.text }];
+    const idx = msg.text.indexOf(msg.ref);
+    if (idx === -1) return [{ t:'text', v:msg.text }];
+    const r = [];
+    if (idx > 0) r.push({ t:'text', v:msg.text.slice(0, idx) });
+    r.push({ t:'ref', v:msg.ref });
+    const after = msg.text.slice(idx + msg.ref.length);
+    if (after) r.push({ t:'text', v:after });
+    return r;
+  }, [msg.text, msg.ref]);
+
+  const handleStreamComplete = useCallback(() => {
+    setDoneAnim(true);
+    onComplete?.();
+  }, [onComplete]);
+
+  if (msg.role === 'user') return <div className="msg user" style={style}><div className="msg-text">{msg.text}</div></div>;
+
+  const state = isStreaming ? 'streaming' : 'done';
+
+  return (
+    <div className="msg-agent-wrap" style={style}>
+      <div className="msg-avatar-col">
+        <div className="msg-avatar-icon">{getRobot(msg.agent)}</div>
+        <div className={'msg-avatar-state ' + state}/>
+      </div>
+      <div className={'msg-agent-bubble' + (doneAnim ? ' done-anim' : '')}>
+        <div className="msg-agent-header">
+          <span className="msg-agent-name">{msg.agent}</span>
+          <span className={'msg-state-badge ' + state}>{state === 'streaming' ? '输出中…' : '完成'}</span>
+        </div>
+        <div className="msg-text">
+          {isStreaming ? (
+            <StreamingText text={msg.text} onComplete={handleStreamComplete}/>
+          ) : (
+            parts.map((p,i) => p.t==='ref' ? <FileRef key={i} path={p.v} onClick={onFileClick}/> : <span key={i}>{p.v}</span>)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+function MsgThread({ messages, onFileClick, delayOffset, streamingIdx, onStreamComplete }) {
+  return messages.map((msg,i) => {
+    const isStreaming = msg.role === 'agent' && streamingIdx === i;
+    return (
+      <ChatMessage key={i} msg={msg} onFileClick={onFileClick}
+        style={{animationDelay:`${((delayOffset??0)+i)*0.07}s`}}
+        isStreaming={isStreaming}
+        onComplete={onStreamComplete}/>
+    );
+  });
+}
+
+/* ── Thinking Panel (unified) ── */
+function ThinkingPanel({ chunks, visible, elapsed }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+
+  if (!visible || !chunks || chunks.length === 0) return null;
+
+  // Group chunks by agent
+  const groups = useMemo(() => {
+    const map = new Map();
+    chunks.forEach(c => {
+      if (!map.has(c.agent)) map.set(c.agent, []);
+      map.get(c.agent).push(c);
+    });
+    return Array.from(map.entries());
+  }, [chunks]);
+
+  const isComplete = !visible;
+
+  // If thinking is done and user collapsed to summary
+  if (summaryCollapsed) {
+    return (
+      <div className="thinking-panel-summary" onClick={() => setSummaryCollapsed(false)}>
+        <div className="thinking-panel-summary-icon">{getRobot('supervisor')}</div>
+        <span className="thinking-panel-summary-text">
+          已推理 {chunks.length} 步{elapsed ? ` · 耗时 ${elapsed}` : ''}
+        </span>
+        <span className="thinking-panel-summary-expand">展开</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="thinking-panel">
+      <div className="thinking-panel-header" onClick={() => setCollapsed(p => !p)}>
+        <div className="thinking-panel-header-icon">{getRobot('supervisor')}</div>
+        <span className="thinking-panel-header-label">Supervisor · 推理中...</span>
+        <span className="thinking-panel-header-meta">{chunks.length} 步{elapsed ? ` · ${elapsed}` : ''}</span>
+        <div className="thinking-dots" style={{marginLeft:4}}>
+          <div className="thinking-dot"/><div className="thinking-dot"/><div className="thinking-dot"/>
+        </div>
+        <span className={'thinking-panel-header-arrow' + (collapsed ? '' : ' open')}>▾</span>
+      </div>
+      {!collapsed && (
+        <div className="thinking-panel-body">
+          {groups.map(([agent, agentChunks]) => (
+            <div key={agent} className="thinking-panel-agent-group">
+              <div className="thinking-panel-agent-header">
+                <div className="thinking-panel-agent-avatar">{getRobot(agent)}</div>
+                <span className="thinking-panel-agent-name">{agent}</span>
+              </div>
+              <div className="thinking-panel-chunk-text">
+                <StreamingText text={agentChunks.map(c => c.text).join(' ')} speed={15}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Monitor Panel ── */
+function formatDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+}
+
+function MonitorIcon({ color }) {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16">
+      <circle cx="8" cy="8" r="6" fill="none" stroke={color||'var(--text-muted)'} strokeWidth="1.2"/>
+      <path d="M8 4v4l3 2" fill="none" stroke={color||'var(--text-muted)'} strokeWidth="1.2" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+function MonitorPanel({ elapsed, tokenData, agentTokens, taskItems }) {
+  const totalTokens = Object.values(agentTokens||{}).reduce((s,v) => s + v.input + v.output, 0);
+  const totalCost = (totalTokens * 0.000003).toFixed(4);
+
+  const maxAgentTokens = Math.max(1, ...Object.values(agentTokens||{}).map(v => v.input + v.output));
+
+  return (
+    <div>
+      {/* Runtime */}
+      <div className="monitor-section">
+        <div className="monitor-section-title">运行时</div>
+        <div className="monitor-card" style={{'--mc-color':'#818cf8'}}>
+          <div className="monitor-row">
+            <span className="monitor-label">
+              <span className="monitor-label-icon"><MonitorIcon color="#818cf8"/></span>
+              会话时间
+            </span>
+            <span className="monitor-value accent">{formatDuration(elapsed)}</span>
+          </div>
+          <div className="monitor-row">
+            <span className="monitor-label">
+              <span className="monitor-label-icon">
+                <svg viewBox="0 0 16 16" width="16" height="16"><rect x="1" y="4" width="14" height="8" rx="2" fill="none" stroke="var(--text-faint)" strokeWidth="1.2"/><circle cx="8" cy="8" r="2.5" fill="none" stroke="var(--text-faint)" strokeWidth="1.2"/></svg>
+              </span>
+              Processing
+            </span>
+            <span className="monitor-value accent">{(elapsed * 0.73).toFixed(0)}s</span>
+          </div>
+          <div className="monitor-row" style={{borderBottom:'none'}}>
+            <span className="monitor-label">
+              <span className="monitor-label-icon">
+                <svg viewBox="0 0 16 16" width="16" height="16"><rect x="2" y="3" width="12" height="10" rx="2" fill="none" stroke="var(--text-faint)" strokeWidth="1.2"/><circle cx="6" cy="7" r="1.5" fill="#818cf8"/><circle cx="10" cy="7" r="1.5" fill="#818cf8"/><circle cx="8" cy="11" r="1.5" fill="#818cf8"/></svg>
+              </span>
+              Agent 调用
+            </span>
+            <span className="monitor-value accent">{Object.keys(agentTokens||{}).length}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tasks */}
+      {taskItems && taskItems.length > 0 && (
+      <div className="monitor-section">
+        <div className="monitor-section-title">子任务调度</div>
+        <div className="monitor-card" style={{'--mc-color':'#34d399'}}>
+          {taskItems.map((t, i) => (
+            <div key={i} className="monitor-task-row">
+              <div className="monitor-task-icon">{getRobot(t.agent)}</div>
+              <div className="monitor-task-info">
+                <div className="monitor-task-name">{t.name}</div>
+                <div className="monitor-bar-wrap"><div className={'monitor-task-fill '+t.status}/></div>
+              </div>
+              <div className={'monitor-task-status '+t.status}>
+                {t.status === 'pending' ? '等待' : t.status === 'running' ? '运行中' : '已完成'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
+      {/* Tokens */}
+      <div className="monitor-section">
+        <div className="monitor-section-title">Token 消耗</div>
+        <div className="monitor-card" style={{'--mc-color':'#818cf8'}}>
+          {Object.entries(agentTokens||{}).map(([agent, data]) => {
+            const total = data.input + data.output;
+            const pct = Math.max(3, (total / maxAgentTokens) * 100);
+            return (
+              <div key={agent} className="monitor-agent-row">
+                <div className="monitor-agent-icon">{getRobot(agent)}</div>
+                <div className="monitor-agent-info">
+                  <div className="monitor-agent-name">{agent}</div>
+                  <div className="monitor-agent-tokens">in {data.input.toLocaleString()} · out {data.output.toLocaleString()}</div>
+                  <div className="monitor-bar-wrap"><div className="monitor-bar-fill thinking" style={{width:`${pct}%`}}/></div>
+                </div>
+                <div className="monitor-agent-right">
+                  <div className="monitor-agent-total">{total.toLocaleString()}</div>
+                  <div className="monitor-agent-ms">{data.ms}ms</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Summary */}
+      <div className="monitor-section">
+        <div className="monitor-section-title">汇总</div>
+        <div className="monitor-card" style={{'--mc-color':'#818cf8'}}>
+          <div className="monitor-row">
+            <span className="monitor-label">总 Tokens</span>
+            <span className="monitor-value accent">{totalTokens.toLocaleString()}</span>
+          </div>
+          <div className="monitor-row" style={{borderBottom:'none'}}>
+            <span className="monitor-label">估算成本</span>
+            <span className="monitor-value accent">${totalCost}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── AgentConfigForm ── */
+function AgentConfigForm({ config, onChange, accentColor }) {
+  const set = (k,v) => onChange({...config,[k]:v});
+  return (
+    <div>
+      <div className="config-card">
+        <div className="config-group-label">模型</div>
+        <div className="config-row">
+          <span className="config-label">Model</span>
+          <select className="config-select" value={config.model} onChange={e=>set('model',e.target.value)}>
+            <option value="deepseek-v4-flash-free">deepseek-v4-flash-free</option>
+            <option value="deepseek-v4">deepseek-v4</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="claude-sonnet-4">claude-sonnet-4</option>
+          </select>
+        </div>
+      </div>
+      <div className="config-card">
+        <div className="config-group-label">生成</div>
+        <div className="config-row">
+          <span className="config-label">Temperature</span>
+          <div className="config-slider-wrap">
+            <input className="config-slider" type="range" min="0" max="2" step="0.1" value={config.temperature} onChange={e=>set('temperature',parseFloat(e.target.value))}/>
+            <span className="config-val">{config.temperature}</span>
+          </div>
+        </div>
+        <div className="config-row">
+          <span className="config-label">Max Tokens</span>
+          <input className="config-input" value={config.maxTokens} onChange={e=>set('maxTokens',parseInt(e.target.value)||0)}/>
+        </div>
+      </div>
+      <div className="config-card">
+        <div className="config-group-label">行为</div>
+        <div className="config-row">
+          <span className="config-label">Thinking Tokens</span>
+          <button className={'config-toggle'+(config.enableThinking?' on':'')} onClick={()=>set('enableThinking',!config.enableThinking)}/>
+        </div>
+        <div className="config-row">
+          <span className="config-label">Debug Mode</span>
+          <button className={'config-toggle'+(config.debugMode?' on':'')} onClick={()=>set('debugMode',!config.debugMode)}/>
+        </div>
+        <div className="config-row">
+          <span className="config-label">Audit Logging</span>
+          <button className={'config-toggle'+(config.auditLogging?' on':'')} onClick={()=>set('auditLogging',!config.auditLogging)}/>
+        </div>
+      </div>
+      <div className="config-card">
+        <div className="config-group-label">会话</div>
+        <div className="config-row">
+          <span className="config-label">Session TTL</span>
+          <input className="config-input" value={config.sessionTTL+'h'} onChange={e=>set('sessionTTL',parseInt(e.target.value)||0)}/>
+        </div>
+        <div className="config-row">
+          <span className="config-label">Failure Threshold</span>
+          <input className="config-input" value={config.failureThreshold} onChange={e=>set('failureThreshold',parseInt(e.target.value)||0)}/>
+        </div>
+        <div className="config-row">
+          <span className="config-label">Recovery Timeout</span>
+          <input className="config-input" value={config.recoveryTimeout+'s'} onChange={e=>set('recoveryTimeout',parseInt(e.target.value)||0)}/>
+        </div>
+      </div>
+      <div className="config-actions">
+        <button className="config-btn">重置</button>
+        <button className="config-btn primary">保存</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Tree utilities ── */
+function buildFileTree() {
+  const tree = { children: {} };
+  const getNode = (parts) => {
+    let n = tree;
+    for (const p of parts) {
+      if (!n.children[p]) n.children[p] = { children: {} };
+      n = n.children[p];
+    }
+    return n;
+  };
+  for (const [dir, entries] of Object.entries(FILE_TREE)) {
+    const parts = dir ? dir.split('/') : [];
+    const parent = getNode(parts);
+    for (const e of entries) {
+      if (!e) continue;
+      if (e.endsWith('/')) {
+        const name = e.slice(0, -1);
+        if (!parent.children[name]) parent.children[name] = { children: {} };
+      } else {
+        parent.children[e] = { file: true };
+      }
+    }
+  }
+  return tree.children;
+}
+
+function FileIcon({ name }) {
+  const ext = name.split('.').pop();
+  const icons = { py:'🐍', md:'📝', toml:'⚙', db:'🗄', pyc:'⚡', json:'{}' };
+  const icon = icons[ext] || '📄';
+  return <span className="fl-icon">{icon}</span>;
+}
+
+const TreeNode = React.memo(function TreeNode({ name, node, path, depth, selected, onSelect }) {
+  const isDir = !node.file;
+  const fullPath = path ? `${path}/${name}` : name;
+  const [expanded, setExpanded] = useState(depth <= 0);
+  const entries = useMemo(() => {
+    if (!isDir) return [];
+    return Object.entries(node.children || {})
+      .filter(([k]) => k)
+      .sort(([a,aN],[b,bN]) => {
+        const aD=!aN.file,bD=!bN.file;
+        if (aD&&!bD) return -1;
+        if (!aD&&bD) return 1;
+        return a.localeCompare(b);
+      });
+  }, [node, isDir]);
+
+  if (!isDir) {
+    return (
+      <div className={'fl-item'+(selected===fullPath?' fl-sel':'')}
+           style={{paddingLeft:10+depth*14}} onClick={()=>onSelect(fullPath)}>
+        <FileIcon name={name}/>
+        <span>{name}</span>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="fl-dir" style={{paddingLeft:10+depth*14}} onClick={()=>setExpanded(!expanded)}>
+        <span className={'fl-arrow'+(expanded?' open':'')}>{'▸'}</span>
+        <span>{name}</span>
+      </div>
+      {expanded && entries.map(([cn,cNode]) => (
+        <TreeNode key={cn} name={cn} node={cNode} path={fullPath}
+                  depth={depth+1} selected={selected} onSelect={onSelect}/>
+      ))}
+    </div>
+  );
+});
+
+/* ── File Explorer ── */
+function FileExplorer({ initialPath, onPathChange, onFileSelect }) {
+  const tree = useMemo(() => buildFileTree(), []);
+  const [selected, setSelected] = useState(initialPath || null);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (initialPath) setSelected(initialPath);
+  }, [initialPath]);
+
+  const handleSelect = (path) => {
+    setSelected(path);
+    if (onPathChange) onPathChange(path);
+    if (onFileSelect) onFileSelect(path);
+  };
+
+  const filtered = useMemo(() => {
+    if (!search) return Object.entries(tree)
+      .filter(([k]) => k)
+      .sort(([a,aN],[b,bN]) => {
+        const aD=!aN.file,bD=!bN.file;
+        if (aD&&!bD) return -1;
+        if (!aD&&bD) return 1;
+        return a.localeCompare(b);
+      });
+    const q = search.toLowerCase();
+    return Object.entries(tree)
+      .filter(([k]) => k.toLowerCase().includes(q))
+      .sort(([a,aN],[b,bN]) => {
+        const aD=!aN.file,bD=!bN.file;
+        if (aD&&!bD) return -1;
+        if (!aD&&bD) return 1;
+        return a.localeCompare(b);
+      });
+  }, [search, tree]);
+
+  return (
+    <div>
+      <input className="fl-search" placeholder="搜索文件..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      <div className="fl-tree">
+        {filtered.map(([name, node]) => (
+          <TreeNode key={name} name={name} node={node} path="" depth={0}
+                    selected={selected} onSelect={handleSelect}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Agent Group ── */
+function AgentGroup({ label, color, count, children }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div className="agent-group">
+      <div className="agent-group-h" onClick={()=>setCollapsed(!collapsed)}>
+        <span className="agent-group-dot" style={{background:color}}/>
+        {label}
+        <span className="agent-group-count">{count}</span>
+      </div>
+      {!collapsed && children}
+    </div>
+  );
+}
+
+/* ── Resizer ── */
+function Resizer({ onResize, panelWidth }) {
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+    const onMove = (e) => onResize(Math.max(300, Math.min(600, startWidth + startX - e.clientX)));
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [panelWidth, onResize]);
+  return <div className="resizer" onMouseDown={handleMouseDown}/>;
+}
+
+/* ── StreamingText ── */
+function StreamingText({ text, speed = 25, onComplete }) {
+  const [displayed, setDisplayed] = useState(0);
+  const completeRef = useRef(false);
+  const done = displayed >= text.length;
+
+  useEffect(() => {
+    if (done) {
+      if (!completeRef.current) {
+        completeRef.current = true;
+        onComplete?.();
+      }
+      return;
+    }
+    const ch = text[displayed];
+    let delay = speed;
+    if (ch === '。' || ch === '！' || ch === '？' || ch === '\n') delay = speed * 6;
+    else if (ch === '，' || ch === '；' || ch === '：') delay = speed * 3;
+    else if (ch === ' ' || ch === '、') delay = speed * 0.4;
+    const t = setTimeout(() => setDisplayed(d => d + 1), delay);
+    return () => clearTimeout(t);
+  }, [displayed, text, speed, done, onComplete]);
+
+  if (!text) return null;
+  if (done) return <span>{text}</span>;
+  return (
+    <span>
+      {text.slice(0, displayed)}
+      <span className="stream-cursor"/>
+    </span>
+  );
+}
+
+/* ── File Tree View (for drawer) ── */
+function FileTreeView({ rootDir, selected, onSelect }) {
+  const tree = useMemo(() => buildFileTree(), []);
+
+  // Navigate to the rootDir node
+  const rootNode = useMemo(() => {
+    if (!rootDir) return tree;
+    const parts = rootDir.split('/');
+    let node = tree;
+    for (const p of parts) {
+      if (node[p] && node[p].children) node = node[p].children;
+      else return tree;
+    }
+    return node;
+  }, [tree, rootDir]);
+
+  const entries = useMemo(() => {
+    return Object.entries(rootNode)
+      .filter(([k]) => k)
+      .sort(([a, aN], [b, bN]) => {
+        const aD = !aN.file, bD = !bN.file;
+        if (aD && !bD) return -1;
+        if (!aD && bD) return 1;
+        return a.localeCompare(b);
+      });
+  }, [rootNode]);
+
+  return (
+    <div>
+      {rootDir && (
+        <div className="fl-item" style={{paddingLeft: 10, color: 'var(--text-muted)', fontSize: 12}}
+             onClick={() => onSelect('')}>
+          <span className="fl-icon">↩</span>
+          <span>..</span>
+        </div>
+      )}
+      {entries.map(([name, node]) => (
+        <FileTreeItem key={name} name={name} node={node}
+                      path={rootDir ? rootDir + '/' + name : name}
+                      depth={0} selected={selected} onSelect={onSelect}/>
+      ))}
+    </div>
+  );
+}
+
+function FileTreeItem({ name, node, path, depth, selected, onSelect }) {
+  const isDir = !node.file;
+  const [expanded, setExpanded] = useState(depth < 1);
+
+  const entries = useMemo(() => {
+    if (!isDir) return [];
+    return Object.entries(node.children || {})
+      .filter(([k]) => k)
+      .sort(([a, aN], [b, bN]) => {
+        const aD = !aN.file, bD = !bN.file;
+        if (aD && !bD) return -1;
+        if (!aD && bD) return 1;
+        return a.localeCompare(b);
+      });
+  }, [node, isDir]);
+
+  if (!isDir) {
+    const hasContent = !!FILE_CONTENT[path];
+    return (
+      <div className={'fl-item' + (selected === path ? ' fl-sel' : '')}
+           style={{paddingLeft: 10 + depth * 14, opacity: hasContent ? 1 : 0.5}}
+           onClick={() => onSelect(path)}>
+        <FileIcon name={name}/>
+        <span>{name}</span>
+        {!hasContent && <span style={{fontSize:10,color:'var(--text-faint)',marginLeft:'auto'}}>无预览</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="fl-dir" style={{paddingLeft: 10 + depth * 14}} onClick={() => setExpanded(!expanded)}>
+        <span className={'fl-arrow' + (expanded ? ' open' : '')}>{'▸'}</span>
+        <span>{name}</span>
+      </div>
+      {expanded && entries.map(([cn, cNode]) => (
+        <FileTreeItem key={cn} name={cn} node={cNode} path={path + '/' + cn}
+                      depth={depth + 1} selected={selected} onSelect={onSelect}/>
+      ))}
+    </div>
+  );
+}
+
+/* ── File Drawer ── */
+function FileDrawer({ files, activeFile, onTabSelect, onTabClose, onClose, width, onResize, showTree, onToggleTree, onFileOpen, selectedDir, onSelectDir }) {
+  const handleResizeMouseDown = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = width;
+    const onMove = (e) => onResize(Math.max(280, Math.min(800, startWidth - (e.clientX - startX))));
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [width, onResize]);
+
+  // Tree sidebar resizer
+  const [treeWidth, setTreeWidth] = useState(220);
+  const handleTreeResizeMouseDown = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = treeWidth;
+    const onMove = (e) => setTreeWidth(Math.max(140, Math.min(360, startW + (e.clientX - startX))));
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [treeWidth]);
+
+  // Tree file selection
+  const [treeSelected, setTreeSelected] = useState(null);
+  const handleTreeFileSelect = useCallback((path) => {
+    setTreeSelected(path);
+    if (FILE_CONTENT[path] && onFileOpen) {
+      onFileOpen(path);
+    }
+  }, [onFileOpen]);
+
+  // Directory options for the selector
+  const DIR_OPTIONS = [
+    { value: '', label: '根目录' },
+    { value: 'src', label: 'src/' },
+    { value: 'src/agent', label: 'src/agent/' },
+    { value: 'docs', label: 'docs/' },
+    { value: 'tests', label: 'tests/' },
+    { value: 'memory', label: 'memory/' },
+  ];
+  const [fileSearch, setFileSearch] = useState('');
+  const [matchIdx, setMatchIdx] = useState(0);
+  const content = activeFile ? FILE_CONTENT[activeFile] : null;
+
+  const filteredLines = useMemo(() => {
+    if (!fileSearch || !content) return null;
+    const q = fileSearch.toLowerCase();
+    return content.map(([n, t]) => t.toLowerCase().includes(q) ? n : -1).filter(n => n > 0);
+  }, [fileSearch, content]);
+
+  const matchCount = filteredLines ? filteredLines.length : 0;
+  const currentMatchLine = matchCount > 0 ? filteredLines[Math.min(matchIdx, matchCount - 1)] : null;
+
+  const handleNextMatch = useCallback(() => {
+    if (matchCount > 0) setMatchIdx(i => (i + 1) % matchCount);
+  }, [matchCount]);
+
+  const handlePrevMatch = useCallback(() => {
+    if (matchCount > 0) setMatchIdx(i => (i - 1 + matchCount) % matchCount);
+  }, [matchCount]);
+
+  useEffect(() => { setMatchIdx(0); setFileSearch(''); }, [activeFile]);
+
+  const fileLang = activeFile
+    ? ({ py:'Python', md:'Markdown', toml:'Config', json:'JSON' }[activeFile.split('.').pop()] || 'Text')
+    : '';
+
+  const handleCopy = useCallback(() => {
+    if (!content) return;
+    navigator.clipboard.writeText(content.map(([, t]) => t).join('\n'));
+  }, [content]);
+
+  const handleCopyPath = useCallback(() => {
+    if (activeFile) navigator.clipboard.writeText(activeFile);
+  }, [activeFile]);
+
+  if (!files || files.length === 0) return null;
+
+  return (
+    <div className="file-drawer" style={{width: width || 420}}>
+      <div className="file-drawer-resizer" onMouseDown={handleResizeMouseDown}/>
+      <div className="file-drawer-header">
+        <button className={'file-drawer-btn' + (showTree ? ' active' : '')} onClick={onToggleTree}
+                title="文件目录" style={showTree ? {background:'var(--accent-bg)',color:'var(--accent-text)'} : {}}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M6 3v2a1 1 0 001 1h2"/><path d="M5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V5.5L9.5 2z"/></svg>
+        </button>
+        <div className="file-drawer-tabs">
+          {files.map(f => (
+            <div key={f} className={'file-drawer-tab' + (f === activeFile ? ' active' : '')} onClick={() => onTabSelect(f)}>
+              <span className={'file-drawer-lang ' + (f.endsWith('.py') ? 'py' : f.endsWith('.md') ? 'md' : f.endsWith('.toml') ? 'toml' : f.endsWith('.json') ? 'json' : '')}>
+                {f.split('.').pop()}
+              </span>
+              <span>{f.split('/').pop()}</span>
+              <button className="file-drawer-tab-close" onClick={e => { e.stopPropagation(); onTabClose(f); }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div className="file-drawer-actions">
+          <button className="file-drawer-btn" onClick={handleCopy} title="复制代码">📋</button>
+          <button className="file-drawer-btn" onClick={handleCopyPath} title="复制路径">🔗</button>
+          <button className="file-drawer-btn file-drawer-close" onClick={onClose} title="关闭 (Esc)">✕</button>
+        </div>
+      </div>
+      <div className="file-drawer-content">
+        {showTree && (
+          <>
+            <div className="file-drawer-tree" style={{width: treeWidth}}>
+              <div className="file-drawer-tree-header">
+                <span className="file-drawer-tree-title">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M2 4h4l2 2h6v7H2z"/></svg>
+                  目录
+                </span>
+                <select className="file-drawer-tree-select" value={selectedDir || ''} onChange={e => onSelectDir(e.target.value)}>
+                  {DIR_OPTIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </div>
+              <div className="file-drawer-tree-body">
+                <FileTreeView rootDir={selectedDir || ''} selected={treeSelected} onSelect={handleTreeFileSelect}/>
+              </div>
+            </div>
+            <div className="file-drawer-tree-resizer" onMouseDown={handleTreeResizeMouseDown}/>
+          </>
+        )}
+        <div className="file-drawer-main">
+          <div className="file-drawer-search-bar">
+            <input className="file-drawer-search-input" placeholder="搜索..." value={fileSearch}
+                   onChange={e => { setFileSearch(e.target.value); setMatchIdx(0); }}/>
+            {fileSearch && (
+              <>
+                <span className="file-drawer-search-info">{matchIdx + 1 > matchCount ? 0 : matchIdx + 1}/{matchCount}</span>
+                <div className="file-drawer-search-nav">
+                  <button onClick={handlePrevMatch} title="上一个">▲</button>
+                  <button onClick={handleNextMatch} title="下一个">▼</button>
+                </div>
+              </>
+            )}
+          </div>
+          {content ? (
+            <div className="file-drawer-body" key={activeFile}>
+              <div className="file-drawer-nums">
+                {content.map(([n]) => (
+                  <div key={n} className={'file-drawer-num' + (filteredLines?.includes(n) ? ' match' : '') + (currentMatchLine === n ? ' current' : '')}>{n}</div>
+                ))}
+              </div>
+              <div className="file-drawer-code">
+                {content.map(([n, txt, hl2]) => (
+                  <div key={n} className={'file-drawer-line' + (filteredLines?.includes(n) ? ' match' : '') + (currentMatchLine === n ? ' current' : '')}>{hl(txt, hl2)}</div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="file-drawer-empty">{files.length > 0 ? '选择左侧文件查看内容' : '点击目录中的文件打开预览'}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── TaskBoard ── */
+const TASK_TEMPLATES = [
+  { agent: 'coder', name: '代码分析与检查', duration: 900 },
+  { agent: 'researcher', name: '相关信息检索', duration: 1300 },
+  { agent: 'analyst', name: '结果验证与汇总', duration: 1100 },
+];
+
+function TaskBoard({ items }) {
+  return (
+    <div className="task-board">
+      <div className="task-board-hdr">
+        {getRobot('supervisor')}
+        <span>Supervisor · 调度计划</span>
+      </div>
+      {items.map((t, i) => (
+        <div key={i} className={'task-item '+t.status}>
+          <div className="task-item-icon">{getRobot(t.agent)}</div>
+          <div className="task-item-info">
+            <div className="task-item-name">{t.name}</div>
+            <div className="task-item-bar">
+              <div className={'task-item-fill '+t.status}/>
+            </div>
+          </div>
+          <div className={'task-item-status '+t.status}>
+            {t.status === 'pending' ? '等待' : t.status === 'running' ? '运行中' : '已完成'}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── App ── */
+function App() {
+  const [conversations, setConversations] = useState(CONVERSATIONS);
+  const [activeConvId, setActiveConvId] = useState('c0');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [rightTab, setRightTab] = useState('monitor');
+  const [activeAgentId, setActiveAgentId] = useState('supervisor');
+  const [agentConfigs, setAgentConfigs] = useState(DEFAULT_AGENT_CONFIGS);
+  const [filePath, setFilePath] = useState(null);
+  const [openFiles, setOpenFiles] = useState([]);
+  const [activeDrawerFile, setActiveDrawerFile] = useState(null);
+  const [drawerWidth, setDrawerWidth] = useState(420);
+  const [drawerShowTree, setDrawerShowTree] = useState(true);
+  const [drawerSelectedDir, setDrawerSelectedDir] = useState('');
+  const [pendingMessages, setPendingMessages] = useState([]);
+  const [panelWidth, setPanelWidth] = useState(340);
+  const [isProcessing, setIsProcessing] = useState(true);
+  const [thinkingVisible, setThinkingVisible] = useState(true);
+  const [thinkingChunks, setThinkingChunks] = useState(THINKING_CHUNKS_MOCK.slice(0, 3));
+  const [inputText, setInputText] = useState('');
+  const [convStatus, setConvStatus] = useState({ c0: 'processing' });
+  const [messagesState, setMessagesState] = useState(() => {
+    const c = {};
+    for (const [k,v] of Object.entries(MESSAGES)) c[k] = [...v];
+    return c;
+  });
+  const [streamingIdx, setStreamingIdx] = useState(-1);
+  const [taskState, setTaskState] = useState({
+    c0: {
+      visible: true,
+      items: TASK_TEMPLATES.map((t, i) => ({
+        agent: t.agent, name: t.name,
+        status: i === 0 ? 'running' : 'pending'
+      }))
+    }
+  });
+  const [thinkingAgents, setThinkingAgents] = useState(['coder', 'researcher', 'analyst']);
+  const [selectedToolId, setSelectedToolId] = useState(null);
+  const [toolsList, setToolsList] = useState(TOOLS_LIST);
+  const [elapsed, setElapsed] = useState(0);
+  const [agentTokens, setAgentTokens] = useState({
+    supervisor: { input: 1240, output: 380, ms: 1200 },
+    coder: { input: 2800, output: 1560, ms: 3400 },
+    researcher: { input: 3400, output: 2100, ms: 4200 },
+    analyst: { input: 1800, output: 920, ms: 2100 },
+    helper: { input: 600, output: 300, ms: 800 },
+  });
+  const [processStartTime, setProcessStartTime] = useState(null);
+  const convIdCounter = useRef(5);
+  const [theme, setTheme] = useState(() => localStorage.getItem('aw-theme') || 'dark');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('aw-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(t => t === 'dark' ? 'light' : 'dark');
+  }, []);
+
+  const handleNewConversation = useCallback(() => {
+    convIdCounter.current += 1;
+    const newId = 'c' + convIdCounter.current;
+    const robotTypes = ['coder','supervisor','analyst','researcher','helper'];
+    const robot = robotTypes[convIdCounter.current % 5];
+    const newConv = {
+      id: newId, name: '新会话 ' + convIdCounter.current,
+      robot, preview: '开始新的对话', time: '刚刚', unread: 0, status: 'active'
+    };
+    setConversations(prev => [newConv, ...prev]);
+    setActiveConvId(newId);
+    setMessagesState(prev => ({...prev, [newId]: []}));
+    setFilePath(null);
+  }, []);
+
+  const prevConvRef = useRef(activeConvId);
+  const streamConvRef = useRef(activeConvId);
+  const msgsRef = useRef(messagesState);
+  msgsRef.current = messagesState;
+
+  // Timer for elapsed time
+  useEffect(() => {
+    if (!isProcessing) return;
+    const interval = setInterval(() => {
+      setElapsed(e => e + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isProcessing]);
+
+  // Start streaming sequence when conversation changes
+  useEffect(() => {
+    prevConvRef.current = activeConvId;
+    setStreamingIdx(-1);
+    const msgs = msgsRef.current[activeConvId] || [];
+    const firstAgent = msgs.findIndex(m => m.role === 'agent');
+    if (firstAgent >= 0) {
+      streamConvRef.current = activeConvId;
+      const t = setTimeout(() => setStreamingIdx(firstAgent), 400);
+      return () => clearTimeout(t);
+    }
+  }, [activeConvId]);
+
+  const onStreamComplete = useCallback(() => {
+    const convId = streamConvRef.current;
+    setStreamingIdx(prev => {
+      const msgs = msgsRef.current[convId] || [];
+      const next = msgs.findIndex((m, i) => i > prev && m.role === 'agent');
+      if (next >= 0) return next;
+      setConvStatus(p => ({...p, [convId]: 'completed'}));
+      return -1;
+    });
+  }, []);
+
+  const filteredConvs = useMemo(() => {
+    let result = conversations;
+    if (statusFilter === 'active') {
+      result = result.filter(c => (convStatus[c.id]||c.status) !== 'completed');
+    } else if (statusFilter === 'completed') {
+      result = result.filter(c => (convStatus[c.id]||c.status) === 'completed');
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(c => c.name.toLowerCase().includes(q));
+    }
+    return result;
+  }, [search, conversations, statusFilter, convStatus]);
+
+  const currentConv = conversations.find(c => c.id === activeConvId);
+  const displayMsgs = messagesState[activeConvId] || [];
+  const activeAgent = AGENT_LIST.find(a => a.id === activeAgentId);
+  const status = convStatus[activeConvId] || currentConv?.status || 'active';
+  const selectedTool = toolsList.find(t => t.id === selectedToolId);
+
+  const handleToolDelete = useCallback((id) => {
+    setToolsList(p => p.filter(t => t.id !== id));
+    setSelectedToolId(null);
+  }, []);
+
+  const handleToolToggle = useCallback((id) => {
+    setToolsList(p => p.map(t => t.id === id ? {...t, enabled: !(t.enabled ?? true)} : t));
+  }, []);
+
+  const handleFileClick = useCallback((path) => {
+    setFilePath(path);
+    setOpenFiles(prev => prev.includes(path) ? prev : [...prev, path]);
+    setActiveDrawerFile(path);
+  }, []);
+
+  const handleFileTabSelect = useCallback((path) => {
+    setActiveDrawerFile(path);
+  }, []);
+
+  const handleFileTabClose = useCallback((path) => {
+    setOpenFiles(prev => {
+      const next = prev.filter(f => f !== path);
+      if (activeDrawerFile === path) {
+        setActiveDrawerFile(next.length > 0 ? next[next.length - 1] : null);
+      }
+      return next;
+    });
+  }, [activeDrawerFile]);
+
+  const handleDrawerClose = useCallback(() => {
+    setOpenFiles([]);
+    setActiveDrawerFile(null);
+  }, []);
+
+  const handleFileOpen = useCallback((path) => {
+    setOpenFiles(prev => prev.includes(path) ? prev : [...prev, path]);
+    setActiveDrawerFile(path);
+  }, []);
+
+  const handleSend = useCallback(() => {
+    if (!inputText.trim()) return;
+    const text = inputText.trim();
+    if (isProcessing) {
+      setPendingMessages(prev => [...prev, text]);
+      setInputText('');
+      return;
+    }
+    const convId = activeConvId;
+    const robot = currentConv?.robot || 'helper';
+    setInputText('');
+    setMessagesState(prev => ({...prev, [convId]: [...(prev[convId]||[]), {role:'user', text}]}));
+    setIsProcessing(true);
+    setElapsed(0);
+    setThinkingVisible(true);
+    setConvStatus(prev => ({...prev, [convId]: 'processing'}));
+    setThinkingAgents(TASK_TEMPLATES.map(t => t.agent));
+    setRightTab('monitor');
+
+    // Streaming thinking chunks
+    setThinkingChunks([]);
+    let chunkIdx = 0;
+    const chunkInterval = setInterval(() => {
+      if (chunkIdx < THINKING_CHUNKS_MOCK.length) {
+        setThinkingChunks(prev => [...prev, THINKING_CHUNKS_MOCK[chunkIdx]]);
+        chunkIdx++;
+      } else {
+        clearInterval(chunkInterval);
+      }
+    }, 600);
+
+    const replyText = `分析完成。「${text}」\n\n各子 Agent 已协同处理完毕，关键数据已汇总。`;
+    const thinkDelay = 1200 + Math.random() * 800;
+    setTimeout(() => {
+      setThinkingVisible(false);
+      clearInterval(chunkInterval);
+      setTaskState(prev => ({
+        ...prev,
+        [convId]: {
+          items: TASK_TEMPLATES.map((t, i) => ({
+            agent: t.agent, name: t.name,
+            status: i === 0 ? 'running' : 'pending'
+          }))
+        }
+      }));
+      let accTime = 0;
+      TASK_TEMPLATES.forEach((t, i) => {
+        accTime += t.duration;
+        setTimeout(() => {
+          setTaskState(prev => {
+            const items = [...(prev[convId]?.items || [])];
+            items[i] = {...items[i], status: 'completed'};
+            if (i + 1 < TASK_TEMPLATES.length) {
+              items[i + 1] = {...items[i + 1], status: 'running'};
+            }
+            return {...prev, [convId]: {...prev[convId], items}};
+          });
+          if (i === TASK_TEMPLATES.length - 1) {
+            setTimeout(() => {
+              let newIdx;
+              setMessagesState(prev => {
+                const msgs = prev[convId] || [];
+                newIdx = msgs.length;
+                return {...prev, [convId]: [...msgs, {role:'agent', agent:robot, text:replyText}]};
+              });
+              streamConvRef.current = convId;
+              setStreamingIdx(newIdx);
+              setIsProcessing(false);
+              setThinkingAgents([]);
+              // Process pending messages
+              setPendingMessages(prev => {
+                if (prev.length > 0) {
+                  const next = prev[0];
+                  pendingSendRef.current = true;
+                  setTimeout(() => {
+                    setInputText(next);
+                  }, 200);
+                  return prev.slice(1);
+                }
+                return prev;
+              });
+            }, 500);
+          }
+        }, accTime);
+      });
+    }, thinkDelay);
+  }, [inputText, activeConvId, currentConv, isProcessing]);
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  }, [handleSend]);
+
+  // Auto-send pending messages when agent finishes and input is populated
+  const pendingSendRef = useRef(false);
+  useEffect(() => {
+    if (!isProcessing && inputText && pendingMessages.length >= 0 && pendingSendRef.current) {
+      pendingSendRef.current = false;
+      const timer = setTimeout(() => handleSend(), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isProcessing, inputText, pendingMessages.length, handleSend]);
+
+  useEffect(() => {
+    if (!activeDrawerFile) return;
+    const handler = (e) => { if (e.key === 'Escape') handleDrawerClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeDrawerFile, handleDrawerClose]);
+
+  return (
+    <div className="app">
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div>
+            <div className="sidebar-title">Agent Workbench</div>
+            <div className="sidebar-sub">{conversations.length} 会话</div>
+          </div>
+          <button className="theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? '切换亮色模式' : '切换暗色模式'}>
+            {theme === 'dark' ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            )}
+          </button>
+        </div>
+        <div className="search-row">
+          <div className="search-wrap">
+            <input className="conv-search" placeholder="搜索会话..." value={search} onChange={e=>setSearch(e.target.value)}/>
+            <svg className="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5"/></svg>
+          </div>
+          <button className="new-conv-btn" onClick={handleNewConversation} title="新建会话">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M8 2v12M2 8h12"/></svg>
+          </button>
+        </div>
+        <div className="conv-filter">
+          {[{k:'all',l:'全部'},{k:'active',l:'进行中'},{k:'completed',l:'已完成'}].map(f => (
+            <button key={f.k} className={'conv-filter-btn'+(statusFilter===f.k?' active':'')} onClick={()=>setStatusFilter(f.k)}>{f.l}</button>
+          ))}
+        </div>
+        <div className="conv-list">
+          {filteredConvs.length === 0 && (
+            <div style={{textAlign:'center',padding:'30px 20px',color:'var(--text-faint)',fontSize:13}}>
+              {statusFilter === 'all' ? '暂无会话 · 点击 + 开始' : statusFilter === 'active' ? '没有进行中的会话' : '没有已完成的会话'}
+            </div>
+          )}
+          {filteredConvs.map(c => {
+            const cStatus = convStatus[c.id]||c.status;
+            const isProcessing = cStatus === 'processing';
+            const isCompleted = cStatus === 'completed';
+            const handleDelete = (id, e) => {
+              e.stopPropagation();
+              setConversations(p => p.filter(x => x.id !== id));
+              if (activeConvId === id) {
+                const r = conversations.filter(x => x.id !== id);
+                if (r.length > 0) setActiveConvId(r[0].id);
+              }
+            };
+            return (
+            <div key={c.id} className="conv-item-wrap">
+              <div className={'conv-item'+(activeConvId===c.id?' active':'')+(isProcessing?' processing':'')}
+                   onClick={()=>{setActiveConvId(c.id);setFilePath(null)}}>
+              <div className="conv-avatar">
+                <ConvAvatar type={c.robot} size={46}/>
+                {isProcessing && <div className="conv-avatar-indicator processing"/>}
+                {isCompleted && <div className="conv-avatar-indicator completed">✓</div>}
+              </div>
+              <div className="conv-info">
+                <div className="conv-name">
+                  {c.name}
+                  {isProcessing && <span className="conv-name-badge processing"><span className="thinking-dots-inline"><span/><span/><span/></span></span>}
+                  {!isProcessing && !isCompleted && <span className="conv-name-badge active">活跃</span>}
+                  {isCompleted && <span className="conv-name-badge completed">已完成</span>}
+                </div>
+                <div className="conv-preview">
+                  {isProcessing ? (
+                    <span className="conv-thinking-row">
+                      {thinkingAgents.map((a,i) => (
+                        <span key={a} className="conv-thinking-agent" style={{animationDelay:`${i*0.15}s`}}>
+                          {getRobot(a)}
+                        </span>
+                      ))}
+                      <span className="conv-thinking-label">思考中…</span>
+                    </span>
+                  ) : c.preview}
+                </div>
+              </div>
+              <div className="conv-time" style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
+                <span>{c.time}</span>
+              </div>
+              {c.unread>0 && <div className="conv-unread"/>}
+              <button className="conv-hover-delete" onClick={e => handleDelete(c.id, e)} title="删除会话">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" width="14" height="14"><path d="M3 4h10M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v4M10 7v4M4 4l.7 9.1a1 1 0 001 .9h4.6a1 1 0 001-.9L12 4"/></svg>
+              </button>
+            </div>
+            </div>
+          );})}
+        </div>
+      </aside>
+
+      {/* Chat */}
+      <div className="center-col">
+        {isProcessing && <div className="status-bar"><div className="status-bar-progress"/></div>}
+        <div className="chat-header">
+          <div className={'conv-avatar'+(status==='completed'?' robot-wave':' robot-bob')} style={{width:34,height:34}}>
+            {currentConv && getRobot(currentConv.robot)}
+          </div>
+          <div className="chat-header-info">
+            <div className="chat-header-name">{currentConv?.name||'选择会话'}</div>
+            <div className="chat-header-status" style={{gap:8}}>
+              {status === 'processing' ? (
+                <span className="status-badge processing">● 运行中</span>
+              ) : status === 'completed' ? (
+                <span className="status-badge completed">✓ 已完成</span>
+              ) : (
+                <span className="status-badge online">● 在线</span>
+              )}
+              {isProcessing && <span style={{fontSize:12,color:'var(--text-faint)'}}>Agent 思考中...</span>}
+              {isProcessing && <span style={{fontSize:11,color:'var(--text-faint)',fontFamily:'monospace'}}>{formatDuration(elapsed)}</span>}
+            </div>
+          </div>
+        </div>
+        <div className="chat-messages">
+          {thinkingVisible && <ThinkingPanel chunks={thinkingChunks} visible={thinkingVisible} elapsed={formatDuration(elapsed)}/>}
+          <MsgThread messages={displayMsgs} onFileClick={handleFileClick}
+                     streamingIdx={streamingIdx} onStreamComplete={onStreamComplete}/>
+          {displayMsgs.length===0 && !thinkingVisible && (
+            <div className="welcome">
+              <div className="welcome-icon">🤖</div>
+              <div className="welcome-title">{currentConv ? '开始对话' : '选择一个会话'}</div>
+              <div className="welcome-desc">{currentConv ? '输入消息，Agent 将自动响应' : '左侧选择会话开始讨论'}</div>
+            </div>
+          )}
+        </div>
+        {openFiles.length > 0 && activeDrawerFile && (
+          <>
+            <div className="file-drawer-overlay" onClick={handleDrawerClose}/>
+            <FileDrawer files={openFiles} activeFile={activeDrawerFile}
+                        onTabSelect={handleFileTabSelect} onTabClose={handleFileTabClose} onClose={handleDrawerClose}
+                        width={drawerWidth} onResize={setDrawerWidth}
+                        showTree={drawerShowTree} onToggleTree={() => setDrawerShowTree(p => !p)}
+                        onFileOpen={handleFileOpen}
+                        selectedDir={drawerSelectedDir} onSelectDir={setDrawerSelectedDir}/>
+          </>
+        )}
+        <div className={'input-bar' + (pendingMessages.length > 0 ? ' queued' : '')} style={{position:'relative'}}>
+          <input placeholder={isProcessing ? (pendingMessages.length > 0 ? `已排队 ${pendingMessages.length} 条消息...` : 'Agent 处理中...') : '输入消息... @ 提及 Agent'}
+                 value={inputText} onChange={e=>setInputText(e.target.value)}
+                 onKeyDown={handleKeyDown}/>
+          {pendingMessages.length > 0 && <span className="send-hint">排队中</span>}
+           <button onClick={handleSend}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Resizer */}
+      <Resizer onResize={setPanelWidth} panelWidth={panelWidth}/>
+
+      {/* Right Panel */}
+      <aside className="right-panel" style={{width:panelWidth,minWidth:panelWidth}}>
+        <div className="panel-tabs">
+          {[
+            {k:'monitor',l:'监控',
+             s:<svg className="panel-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/><path d="M2.5 2.5l2 2M13.5 2.5l-2 2M8 13.5v-2"/></svg>},
+            {k:'agents',l:'Agents',
+             s:<svg className="panel-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><circle cx="8" cy="5" r="2.5"/><path d="M3 14c0-3 2.2-5 5-5s5 2 5 5"/><circle cx="4" cy="3.5" r="1.2"/><circle cx="12" cy="3.5" r="1.2"/><path d="M1.5 10c.5-1.5 1.8-2.5 3.5-2.5M14.5 10c-.5-1.5-1.8-2.5-3.5-2.5"/></svg>},
+            {k:'tools',l:'工具',
+             s:<svg className="panel-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M6 10l-3 3M11.5 3.5l-5 5"/><circle cx="3" cy="13" r="1.8"/><circle cx="12.5" cy="2.5" r="2"/><path d="M13 5l2-2"/></svg>},
+            {k:'files',l:'文件',
+             s:<svg className="panel-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M6 3v2a1 1 0 001 1h2"/><path d="M5 2H4a1 1 0 00-1 1v10a1 1 0 001 1h8a1 1 0 001-1V5.5L9.5 2z"/></svg>},
+          ].map(tab => (
+            <button key={tab.k} className={'panel-tab'+(rightTab===tab.k?' active':'')} onClick={()=>setRightTab(tab.k)}>
+              {tab.s}{tab.l}
+            </button>
+          ))}
+        </div>
+        <div className="panel-body">
+          {rightTab==='agents' && (
+            <div>
+              {[{status:'online',label:'在线',color:'#818cf8'},{status:'busy',label:'忙碌',color:'#818cf8'},{status:'offline',label:'离线',color:'var(--text-faint)'}].map(group=>{
+                const agents = AGENT_LIST.filter(a=>a.status===group.status);
+                if (!agents.length) return null;
+                return (
+                  <AgentGroup key={group.status} label={group.label} color={group.color} count={agents.length}>
+                    {agents.map(a => (
+                      <div key={a.id} className="agent-card" onClick={()=>{setActiveAgentId(a.id);setRightTab('config')}}>
+                        <div className="agent-avatar-s">{getRobot(a.type)}</div>
+                        <div className="agent-info-s">
+                          <div className="agent-name-s">{a.name}</div>
+                          <div className="agent-desc-s">{a.desc}</div>
+                        </div>
+                        <div className={'agent-status-s '+a.status}>
+                          <span className="status-dot" style={{background:group.color}}/>
+                          {group.label}
+                        </div>
+                      </div>
+                    ))}
+                  </AgentGroup>
+                );
+              })}
+            </div>
+          )}
+          {rightTab==='monitor' && (
+            <MonitorPanel elapsed={elapsed} tokenData={{}} agentTokens={agentTokens}
+                          taskItems={taskState[activeConvId]?.items}/>
+          )}
+          {rightTab==='config' && (
+            <div>
+              <div className="config-header">
+                <button className="config-back-btn" onClick={()=>setRightTab('agents')} title="返回 Agents">←</button>
+                <div className="config-header-avatar">{getRobot(activeAgent?.type||'helper')}</div>
+                <span className="config-header-title">{activeAgent?.name||'Agent'} 配置</span>
+                <span className="config-header-id">{activeAgentId}</span>
+              </div>
+              <AgentConfigForm config={agentConfigs[activeAgentId]||DEFAULT_AGENT_CONFIGS.supervisor}
+                               onChange={c=>setAgentConfigs(p=>({...p,[activeAgentId]:c}))}
+                               accentColor={AGENT_COLORS[activeAgentId]||'#818cf8'}/>
+            </div>
+          )}
+          {rightTab==='tools' && (() => {
+            // Detail view for a selected tool
+            if (selectedToolId) {
+              const t = toolsList.find(x => x.id === selectedToolId);
+              if (!t) return <div style={{padding:20,color:'var(--text-faint)'}}>工具未找到</div>;
+              const enabled = t.enabled ?? true;
+              return (
+                <div>
+                  <div className="config-header">
+                    <button className="config-back-btn" onClick={()=>setSelectedToolId(null)} title="返回">←</button>
+                    <div className="tool-icon-s" style={{background:t.color+'15',color:t.color}}>{t.icon}</div>
+                    <span className="config-header-title">{t.name}</span>
+                    <span className={'tools-type-badge '+t.type}>{t.type}</span>
+                  </div>
+                  <div className="config-card">
+                    <div className="config-group-label">基本信息</div>
+                    <div className="config-row">
+                      <span className="config-label">描述</span>
+                      <span style={{fontSize:13,color:'var(--text-tertiary)',textAlign:'right',maxWidth:'55%'}}>{t.desc}</span>
+                    </div>
+                    <div className="config-row">
+                      <span className="config-label">使用次数</span>
+                      <span className="config-val">{t.usage}</span>
+                    </div>
+                    <div className="config-row">
+                      <span className="config-label">上次使用</span>
+                      <span style={{fontSize:13,color:'var(--text-muted)'}}>{t.lastUsed}</span>
+                    </div>
+                  </div>
+                  <div className="config-card">
+                    <div className="config-group-label">配置</div>
+                    <div className="config-row">
+                      <span className="config-label">启用工具</span>
+                      <button className={'config-toggle'+(enabled?' on':'')} onClick={()=>handleToolToggle(t.id)}/>
+                    </div>
+                  </div>
+                  <div className="config-actions" style={{marginTop:8}}>
+                    <button className="config-btn danger" onClick={()=>handleToolDelete(t.id)}>
+                      <span style={{display:'flex',alignItems:'center',justifyContent:'center',gap:4}}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M3 4h10M5 4V3a1 1 0 011-1h4a1 1 0 011 1v1M6 7v4M10 7v4M4 4l.7 9.1a1 1 0 001 .9h4.6a1 1 0 001-.9L12 4"/></svg>
+                        删除此工具
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            // List view
+            const groups = { core:[], skill:[], mcp:[] };
+            const groupLabels = { core:'Core Tools', skill:'Skills', mcp:'MCP' };
+            const groupIcons = { core:'⚙', skill:'📦', mcp:'🔌' };
+            toolsList.forEach(t => { if (groups[t.type]) groups[t.type].push(t); });
+            return Object.entries(groups).filter(([,ts])=>ts.length).map(([type, ts]) => (
+              <div key={type} className="tools-group">
+                <div className="tools-group-h">
+                  <span>{groupIcons[type]}</span>
+                  <span>{groupLabels[type]}</span>
+                  <span className={'tools-type-badge '+type}>{ts.length}</span>
+                </div>
+                {ts.map(t => (
+                  <div key={t.id} className="tool-card" onClick={()=>setSelectedToolId(t.id)}>
+                    <div className="tool-icon-s" style={{background:t.color+'15',color:t.color}}>{t.icon}</div>
+                    <div className="tool-info-s">
+                      <div className="tool-name-s">{t.name}</div>
+                      <div className="tool-desc-s">{t.desc}</div>
+                    </div>
+                    <div className="tool-usage">
+                      <span className="tool-usage-badge">{t.usage}</span>
+                      <span>{t.lastUsed}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ));
+          })()}
+          {rightTab==='files' && (
+            <FileExplorer initialPath={filePath||''} onPathChange={()=>{}} onFileSelect={handleFileClick}/>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

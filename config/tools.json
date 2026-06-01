@@ -1,0 +1,39 @@
+{
+  "tools": {
+    "execute_code": {
+      "module": "src.agent.tools.execute_code",
+      "func": "execute_code",
+      "category": "Core",
+      "icon": "⚡",
+      "desc": "Execute Python code in sandbox"
+    },
+    "read_file": {
+      "module": "src.agent.tools.file_ops",
+      "func": "read_file",
+      "category": "Core",
+      "icon": "📖",
+      "desc": "Read file contents with optional offset/limit"
+    },
+    "write_file": {
+      "module": "src.agent.tools.file_ops",
+      "func": "write_file",
+      "category": "Core",
+      "icon": "✏️",
+      "desc": "Write content to files"
+    },
+    "list_directory": {
+      "module": "src.agent.tools.file_ops",
+      "func": "list_directory",
+      "category": "Core",
+      "icon": "📁",
+      "desc": "List directory contents with emoji indicators"
+    },
+    "search_files": {
+      "module": "src.agent.tools.search",
+      "func": "search_files",
+      "category": "Core",
+      "icon": "🔍",
+      "desc": "Search for files matching a glob pattern"
+    }
+  }
+}

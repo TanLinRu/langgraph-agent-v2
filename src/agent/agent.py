@@ -1,12 +1,13 @@
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain.agents import create_agent
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from src.agent.audit_logger import log_audit_event
 from src.agent.config import AgentConfig
@@ -15,6 +16,10 @@ from src.agent.models import resolve_model
 from src.agent.tools import TOOLS
 
 logger = logging.getLogger(__name__)
+
+# File path extraction patterns
+_FILE_PATH_RE = re.compile(r'(?:src|docs|tests|ui|memory|skills)[/\\][\w./\\-]+\.\w+')
+_CODE_FILE_RE = re.compile(r'[\w-]+\.(?:py|ts|js|vue|html|json|md|toml|yaml)')
 
 
 def _ts() -> str:
@@ -70,19 +75,29 @@ class Agent:
         token_count = count_tokens(messages)
         threshold = int(self.config.max_tokens * self.config.compression_threshold)
 
-        logger.info(
-            "[LLM Request] %s | model=%s/%s messages=%d tokens~%d/%d(compress_at_%d) tools=%s",
-            label, self.config.model_provider, self.config.model_name,
-            len(messages), token_count, self.config.max_tokens, threshold,
-            [t.name for t in self.tools],
-        )
+        logger.info("=" * 80)
+        logger.info("[LLM REQUEST] %s | trace_id=%s", label, trace_id)
+        logger.info("[LLM REQUEST] model=%s/%s base_url=%s", self.config.model_provider, self.config.model_name, self.config.openai_base_url)
+        logger.info("[LLM REQUEST] messages=%d tokens~%d/%d(compress_at_%d) tools=%d",
+                     len(messages), token_count, self.config.max_tokens, threshold, len(self.tools))
+        logger.info("[LLM REQUEST] tools=%s", [t.name for t in self.tools])
+        logger.info("-" * 40 + " MESSAGE LIST " + "-" * 40)
         for i, msg in enumerate(messages):
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            preview = content[:200] + "..." if len(content) > 200 else content
-            logger.info("  [%d] %s: %s", i, msg.type, preview)
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    logger.info("       -> tool_call: %s(%s)", tc["name"], tc["args"])
+            # Log full content for debugging, not truncated
+            logger.info("  [%d] type=%s len=%d", i, msg.type, len(content))
+            if msg.type == "system":
+                logger.info("  [%d] system: %s", i, content[:500] + "..." if len(content) > 500 else content)
+            elif msg.type == "human":
+                logger.info("  [%d] user: %s", i, content[:500] + "..." if len(content) > 500 else content)
+            elif msg.type == "ai":
+                logger.info("  [%d] assistant: %s", i, content[:500] + "..." if len(content) > 500 else content)
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        logger.info("  [%d]   -> tool_call: %s(%s)", i, tc["name"], json.dumps(tc["args"], ensure_ascii=False)[:200])
+            elif msg.type == "tool":
+                logger.info("  [%d] tool[%s]: %s", i, getattr(msg, 'name', '?'), content[:300] + "..." if len(content) > 300 else content)
+        logger.info("=" * 80)
 
         log_audit_event(
             trace_id=trace_id or str(uuid.uuid4()),
@@ -102,22 +117,50 @@ class Agent:
             },
         )
 
+    def _log_response(self, label: str, content: str, thinking: str = "", elapsed: float = 0, trace_id: str = "") -> None:
+        logger.info("-" * 40 + " LLM RESPONSE " + "-" * 40)
+        logger.info("[LLM RESPONSE] %s | trace_id=%s | elapsed=%.2fs", label, trace_id, elapsed)
+        if thinking:
+            logger.info("[LLM RESPONSE] thinking_len=%d", len(thinking))
+            logger.info("[LLM RESPONSE] thinking_preview: %s", thinking[:300] + "..." if len(thinking) > 300 else thinking)
+        logger.info("[LLM RESPONSE] content_len=%d", len(content))
+        logger.info("[LLM RESPONSE] content: %s", content[:500] + "..." if len(content) > 500 else content)
+        logger.info("=" * 80)
+
     def _build_messages(self, user_input: str, memory_context: str = "",
                         history: list[BaseMessage] | None = None,
                         summary: str = "") -> list[BaseMessage]:
-        system_msg = self._build_system_message(memory_context, summary)
-        return [system_msg] + (history or []) + [HumanMessage(content=user_input)]
+        # Don't create a separate SystemMessage — create_agent already injects one.
+        # Instead, prepend summary/memory as a system-level context message only if needed.
+        context_parts = []
+        if summary:
+            context_parts.append(f"[Previous Conversation Summary]\nThe following is a summary of earlier conversation that has been compacted. Use this context to understand the user's ongoing work:\n\n{summary}")
+        if memory_context:
+            context_parts.append(f"[Memory Context]\n{memory_context}")
+
+        messages: list[BaseMessage] = []
+        if context_parts:
+            # Insert as a system message BEFORE history (but after create_agent's own system prompt)
+            messages.append(SystemMessage(content="\n\n".join(context_parts)))
+
+        messages.extend(history or [])
+        messages.append(HumanMessage(content=user_input))
+        return messages
 
     async def run(self, user_input: str, memory_context: str = "",
-                  history: list[BaseMessage] | None = None) -> AsyncIterator[dict[str, Any]]:
+                  history: list[BaseMessage] | None = None,
+                  summary: str = "") -> AsyncIterator[dict[str, Any]]:
         trace_id = str(uuid.uuid4())
-        messages = self._build_messages(user_input, memory_context, history)
+        messages = self._build_messages(user_input, memory_context, history, summary=summary)
 
         # 上下文压缩
         compressed = False
         if self.compressor.should_compress(messages):
-            summary, recent = await self.compressor.compress(messages[1:])
-            messages = self._build_messages(user_input, memory_context, recent, summary)
+            compress_summary, recent = await self.compressor.compress(messages[1:])
+            # Merge with existing summary if any
+            if summary:
+                compress_summary = f"{summary}\n\n---\n\n{compress_summary}"
+            messages = self._build_messages(user_input, memory_context, recent, summary=compress_summary)
             compressed = True
             logger.info("[Compress] triggered: token_threshold=%d, kept_recent=%d",
                         int(self.config.max_tokens * self.config.compression_threshold), len(recent))
@@ -159,12 +202,45 @@ class Agent:
             yield {"type": "thinking_done"}
 
         _elapsed = time.time() - _t0
+        final_content = "".join(content_parts)
+
+        # Log LLM response
+        thinking_text = ""
+        for msg in messages:
+            if hasattr(msg, 'thinking') and msg.thinking:
+                thinking_text += msg.thinking
+        self._log_response("agent", final_content, thinking=thinking_content if 'thinking_content' in dir() else "", elapsed=_elapsed, trace_id=trace_id)
+
         logger.info(
             "[SSE-TRACE] %s agent done: %d events, %.2fs elapsed, content_len=%d",
-            _ts(), _event_count, _elapsed, sum(len(p) for p in content_parts),
+            _ts(), _event_count, _elapsed, len(final_content),
         )
 
-        yield {"type": "message", "data": "".join(content_parts)}
+        # Extract file references from content
+        file_refs = list(set(_FILE_PATH_RE.findall(final_content) + _CODE_FILE_RE.findall(final_content)))
+
+        yield {
+            "type": "message",
+            "data": final_content,
+            "file_refs": file_refs if file_refs else [],
+        }
+
+        # Emit metrics
+        yield {
+            "type": "metrics",
+            "data": {
+                "elapsed_ms": int(_elapsed * 1000),
+                "agent_calls": 1,
+                "tokens": {
+                    "agent": {
+                        "input": len(user_input) * 2,
+                        "output": len(final_content) * 2,
+                        "ms": int(_elapsed * 1000),
+                    }
+                },
+            },
+        }
+
         yield {"type": "done"}
 
     async def run_stream(self, user_input: str, memory_context: str = "", history: list[BaseMessage] | None = None) -> AsyncIterator[str]:

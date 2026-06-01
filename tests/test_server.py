@@ -1,11 +1,13 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app."""
     from fastapi.testclient import TestClient
+
     from server import app
     return TestClient(app)
 
@@ -76,6 +78,7 @@ def test_orchestrate_endpoint_exists(client):
 def test_orchestrate_sse_format(client):
     """Verify /api/orchestrate emits fine-grained SSE events."""
     import json
+
     import server
 
     mock_supervisor = MagicMock()
@@ -116,5 +119,64 @@ def test_orchestrate_sse_format(client):
         plan_events = [e for e in events if e.get("type") == "plan"]
         assert len(plan_events) == 1
         assert plan_events[0]["agent_name"] == "supervisor"
+    finally:
+        server.supervisor_instance = original
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_acp_dispatch(client):
+    """Supervisor dispatches to opencode (ACP agent) — verifies SSE events flow through HTTP."""
+    import json
+
+    import server
+
+    mock_supervisor = MagicMock()
+
+    async def mock_run(task):
+        yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
+        yield {"type": "thinking", "data": "planning...", "agent_name": "supervisor"}
+        yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}
+        yield {"type": "plan", "data": "## Plan\n- opencode: initialize agent", "agent_name": "supervisor"}
+        yield {"type": "task_update", "data": {"agent": "opencode", "task": "initialize agent", "status": "running"}, "agent_name": "supervisor"}
+        yield {"type": "thinking", "data": "analyzing project...", "agent_name": "opencode"}
+        yield {"type": "message", "data": "OpenCode agent initialized", "agent_name": "opencode"}
+        yield {"type": "thinking_done", "data": "", "agent_name": "opencode"}
+        yield {"type": "task_update", "data": {"agent": "opencode", "task": "initialize agent", "status": "completed"}, "agent_name": "supervisor"}
+        yield {"type": "metrics", "data": {"elapsed_ms": 5000, "agent_calls": 1, "tokens": {}}, "agent_name": "supervisor"}
+        yield {"type": "done"}
+
+    mock_supervisor.run = mock_run
+
+    original = server.supervisor_instance
+    server.supervisor_instance = mock_supervisor
+    try:
+        resp = client.post("/api/orchestrate", json={"task": "test"}, headers={"Accept": "text/event-stream"})
+        assert resp.status_code == 200
+
+        events = []
+        for line in resp.text.split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+
+        event_types = [e["type"] for e in events if "type" in e]
+        assert "plan" in event_types
+        assert "task_update" in event_types
+        assert "message" in event_types
+        assert "done" in event_types
+
+        # Verify opencode agent events
+        acp_events = [e for e in events if e.get("agent_name") == "opencode"]
+        assert len(acp_events) >= 3  # thinking + message + thinking_done
+        acp_types = [e["type"] for e in acp_events]
+        assert "thinking" in acp_types
+        assert "message" in acp_types
+
+        # Verify the opencode message content is in the SSE stream
+        msgs = [e for e in acp_events if e["type"] == "message"]
+        assert any("OpenCode agent initialized" in m["data"] for m in msgs)
+
+        # Verify session_id is attached to events
+        session_ids = [e.get("session_id") for e in events if e.get("session_id")]
+        assert len(session_ids) > 0
     finally:
         server.supervisor_instance = original
