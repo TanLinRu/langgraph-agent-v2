@@ -22,8 +22,12 @@ from src.agent.checkpoint import (
     get_session_summary,
     load_history,
     load_history_with_meta,
+    load_metrics,
+    load_task_updates,
     rename_session,
     save_message,
+    save_metrics,
+    save_task_update,
     save_turn,
     update_session_duration,
     update_session_status,
@@ -418,7 +422,21 @@ async def orchestrate(request: OrchestrateRequest):
                         save_message(session_id, "ai", event.get("data", ""), name="plan")
                         logger.info("[ORCH] plan: %s", event.get("data", "")[:100])
                     elif event["type"] == "task_update":
-                        logger.info("[ORCH] task_update: agent=%s status=%s", event["data"].get("agent"), event["data"].get("status"))
+                        tu = event["data"]
+                        logger.info("[ORCH] task_update: agent=%s status=%s", tu.get("agent"), tu.get("status"))
+                        try:
+                            save_task_update(
+                                session_id,
+                                agent=tu.get("agent", ""),
+                                task=tu.get("task", ""),
+                                status=tu.get("status", "pending"),
+                                state=tu.get("state"),
+                                started_at=tu.get("started_at"),
+                                ended_at=tu.get("ended_at"),
+                                elapsed_ms=tu.get("elapsed_ms"),
+                            )
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save_task_update failed: %s", save_err)
                     elif event["type"] == "tool_call":
                         tool_calls_json = json.dumps(event.get("data", []), ensure_ascii=False)
                         save_message(session_id, "ai", "", tool_calls=tool_calls_json, name=agent_name)
@@ -428,6 +446,10 @@ async def orchestrate(request: OrchestrateRequest):
                         logger.info("[ORCH] summary: len=%d", len(event.get("data", "")))
                     elif event["type"] == "metrics":
                         logger.info("[ORCH] metrics: %s", event["data"])
+                        try:
+                            save_metrics(session_id, json.dumps(event["data"], ensure_ascii=False))
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save_metrics failed: %s", save_err)
                 except Exception as save_err:
                     logger.warning("[ORCH] save_message failed: %s", save_err)
 
@@ -509,9 +531,17 @@ async def create_session_endpoint(request: CreateSessionRequest):
 async def get_session(session_id: str):
     messages = load_history_with_meta(session_id)
     summary = get_session_summary(session_id)
+    task_updates = load_task_updates(session_id)
+    metrics = load_metrics(session_id)
     if not messages and not summary:
         raise HTTPException(status_code=404, detail="Session not found")
-    return {"session_id": session_id, "messages": messages, "summary": summary}
+    return {
+        "session_id": session_id,
+        "messages": messages,
+        "summary": summary,
+        "task_updates": task_updates,
+        "metrics": metrics,
+    }
 
 
 @app.patch("/api/sessions/{session_id}/title")

@@ -10,6 +10,30 @@ export type AgentStatus =
   | 'done'
   | 'failed'
 
+export type TaskState = 'idle' | 'thinking' | 'working' | 'delegating' | 'aggregating' | 'done' | 'failed'
+
+export type LogEntryType = 'start' | 'thinking' | 'tool_call' | 'result' | 'summary' | 'handoff' | 'decision' | 'error' | 'phase'
+
+export interface LogEntry {
+  type: LogEntryType
+  content: string
+  timestamp: number
+  agent?: string
+}
+
+export interface TaskPhaseUpdate {
+  step: number
+  totalSteps: number
+  description: string
+}
+
+export interface TaskDispatchEvent {
+  from: string
+  to: string
+  fromLabel?: string
+  toLabel?: string
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
@@ -61,7 +85,7 @@ export interface TaskUpdate {
   agent: string
   task: string
   status: 'pending' | 'running' | 'completed' | 'failed'
-  state?: 'idle' | 'thinking' | 'working' | 'done' | 'failed'
+  state?: TaskState
   startedAt?: number
   endedAt?: number
   elapsedMs?: number
@@ -326,6 +350,8 @@ export async function restoreSession(sessionId: string): Promise<{
   session_id: string
   messages: Array<{ type: string; content: string; thinking?: string; tool_calls?: Array<{ name: string; args: Record<string, unknown> }>; name?: string; compacted?: boolean }>
   summary: string
+  task_updates: TaskUpdate[]
+  metrics: MetricsData | null
 }> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`)
   if (!res.ok) throw new Error(`Session not found: ${sessionId}`)

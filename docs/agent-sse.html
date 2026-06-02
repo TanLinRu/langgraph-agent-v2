@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Mavis Chat · SSE Demo v6 · Side Task Panel</title>
+<style>
+:root {
+  --bg: #0f0f0f;
+  --bg-elevated: #1a1a1a;
+  --bg-message: #232323;
+  --bg-panel: #161616;
+  --text: #ececec;
+  --text-dim: #8e8e8e;
+  --text-faint: #555;
+  --accent: #7c5cff;
+  --user-bubble: linear-gradient(135deg, #4a8eff 0%, #7c5cff 100%);
+  --border: #2a2a2a;
+
+  --sup-color: #fbbf24;
+  --researcher: #60a5fa;
+  --coder: #c084fc;
+  --analyst: #4ade80;
+  --writer: #f472b6;
+
+  --thinking-bg: rgba(124, 92, 255, 0.08);
+  --thinking-border: rgba(124, 92, 255, 0.25);
+  --tool-bg: rgba(251, 146, 60, 0.08);
+  --tool-border: rgba(251, 146, 60, 0.35);
+  --result-bg: rgba(34, 197, 94, 0.06);
+  --result-border: rgba(34, 197, 94, 0.3);
+  --summary-bg: rgba(59, 130, 246, 0.08);
+  --summary-border: rgba(59, 130, 246, 0.3);
+  --error-bg: rgba(239, 68, 68, 0.08);
+  --error-border: rgba(239, 68, 68, 0.35);
+  --handoff-bg: rgba(148, 163, 184, 0.06);
+  --handoff-border: rgba(148, 163, 184, 0.25);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* === Header === */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.header h1 { font-size: 14px; font-weight: 600; }
+.header h1 span { color: var(--text-dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
+.scenarios { display: flex; gap: 6px; }
+.scenario-btn {
+  background: var(--bg-message); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; font-size: 12px; cursor: pointer;
+  transition: all 0.2s; display: flex; align-items: center; gap: 4px;
+}
+.scenario-btn:hover { color: var(--text); border-color: var(--accent); }
+.scenario-btn.active {
+  background: var(--accent); color: white; border-color: var(--accent);
+}
+.scenario-btn.sup-btn.active { background: var(--sup-color); border-color: var(--sup-color); color: #1a1a1a; }
+.scenario-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* === Main === */
+.main { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+.chat-area { flex: 1; overflow-y: auto; padding: 20px 0; min-width: 0; }
+.chat-area::-webkit-scrollbar { width: 6px; }
+.chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* === Right Sidebar (Task Panel + Event Log) === */
+.right-sidebar {
+  width: 360px; background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+
+/* === Task Panel === */
+.task-panel {
+  flex: 0 0 45%; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+  min-height: 200px;
+}
+.task-panel.disabled { opacity: 0.4; pointer-events: none; }
+.task-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.task-header .badge { background: var(--bg-message); padding: 2px 8px; border-radius: 10px; font-size: 10px; color: var(--text); }
+.task-phase {
+  padding: 10px 14px; background: rgba(251, 191, 36, 0.05);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--sup-color);
+  display: flex; align-items: center; gap: 8px;
+}
+.task-phase.idle { color: var(--text-faint); background: transparent; }
+.task-phase .step { background: var(--bg-message); padding: 2px 8px; border-radius: 3px; font-family: monospace; font-size: 10px; }
+.task-agents { flex: 1; overflow-y: auto; padding: 4px 0; }
+.task-agents::-webkit-scrollbar { width: 3px; }
+.task-agents::-webkit-scrollbar-thumb { background: var(--border); }
+.task-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; font-size: 12px; color: var(--text-dim);
+  border-left: 3px solid transparent;
+  transition: all 0.25s; position: relative;
+}
+.task-row .icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+.task-row .name { font-weight: 500; min-width: 80px; }
+.task-row .status { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: var(--bg-message); color: var(--text-faint); }
+.task-row .bar { flex: 1; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+.task-row .bar-fill { height: 100%; width: 0; background: var(--agent-color, var(--accent)); transition: width 0.3s; }
+.task-row.sup { --agent-color: var(--sup-color); }
+.task-row.researcher { --agent-color: var(--researcher); }
+.task-row.coder { --agent-color: var(--coder); }
+.task-row.analyst { --agent-color: var(--analyst); }
+.task-row.writer { --agent-color: var(--writer); }
+.task-row .name { color: var(--agent-color); }
+
+.task-row.idle { opacity: 0.4; }
+.task-row.thinking { background: rgba(124, 92, 255, 0.05); border-left-color: var(--accent); }
+.task-row.thinking .status { color: var(--accent); }
+.task-row.working {
+  background: color-mix(in srgb, var(--agent-color) 8%, transparent);
+  border-left-color: var(--agent-color);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--agent-color) 20%, transparent);
+}
+.task-row.working .status { color: var(--agent-color); font-weight: 600; }
+.task-row.working .bar-fill { animation: barPulse 1.2s ease-in-out infinite; }
+@keyframes barPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+.task-row.done { border-left-color: var(--result-border); }
+.task-row.done .status { color: var(--result-border); }
+.task-row.failed { border-left-color: var(--error-border); }
+.task-row.failed .status { color: var(--error-border); }
+.task-row.delegating { border-left-color: var(--sup-color); background: rgba(251, 191, 36, 0.05); }
+.task-row.aggregating { border-left-color: var(--result-border); background: rgba(34, 197, 94, 0.05); }
+
+.task-dispatch {
+  padding: 6px 14px; font-size: 11px; color: var(--text-dim);
+  background: var(--bg-elevated); border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px;
+  min-height: 30px;
+}
+.task-dispatch .arrow { color: var(--sup-color); font-weight: 700; }
+.task-dispatch .from { color: var(--sup-color); }
+.task-dispatch .to { color: var(--accent); font-weight: 600; }
+.task-dispatch.fading { opacity: 0.3; transition: opacity 0.3s; }
+
+/* === Messages === */
+.msg { padding: 14px 24px; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.msg-user { display: flex; justify-content: flex-end; }
+.bubble-user {
+  max-width: 70%; padding: 10px 16px;
+  background: var(--user-bubble); color: white;
+  border-radius: 18px; font-size: 14px; line-height: 1.5;
+}
+.msg-agent { display: flex; flex-direction: column; gap: 8px; }
+.msg-supervisor { border-left: 2px solid var(--sup-color); padding-left: 22px; margin-left: 12px; background: rgba(251, 191, 36, 0.03); }
+.agent-header {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-dim);
+}
+.agent-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; background: var(--bg-message);
+  border: 1.5px solid var(--agent-color, var(--accent));
+  color: var(--agent-color, var(--accent));
+}
+.agent-avatar.sup { background: rgba(251, 191, 36, 0.15); border-width: 2px; }
+.agent-name { font-weight: 600; color: var(--agent-color, var(--accent)); }
+.agent-tag { background: var(--bg-message); color: var(--text-faint); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.agent-body { padding-left: 38px; display: flex; flex-direction: column; gap: 8px; }
+.handoff-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--handoff-bg); border: 1px solid var(--handoff-border);
+  border-radius: 6px; padding: 4px 10px; font-size: 11px; color: var(--text-dim);
+  align-self: flex-start; margin-bottom: 4px;
+}
+.handoff-badge .arrow { color: var(--sup-color); }
+
+/* === Thinking === */
+.thinking {
+  background: var(--thinking-bg);
+  border: 1px solid var(--thinking-border);
+  border-radius: 8px; font-size: 13px; color: var(--text-dim);
+  overflow: hidden;
+}
+.thinking-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+}
+.thinking-head:hover { color: var(--text); }
+.thinking-arrow { font-size: 10px; transition: transform 0.2s; }
+.thinking.open .thinking-arrow { transform: rotate(90deg); }
+.thinking-text { flex: 1; font-style: italic; }
+.thinking-dots::after {
+  content: '...'; display: inline-block; animation: dots 1.2s steps(4) infinite;
+  width: 1em; text-align: left;
+}
+@keyframes dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+.thinking-body {
+  max-height: 0; overflow: hidden; transition: max-height 0.3s ease;
+  padding: 0 12px; white-space: pre-wrap; line-height: 1.5;
+  border-top: 0px solid var(--thinking-border);
+}
+.thinking.open .thinking-body {
+  max-height: 400px; padding: 8px 12px 12px;
+  border-top: 1px solid var(--thinking-border);
+}
+
+/* === Tool Call === */
+.tool-call {
+  background: var(--tool-bg);
+  border-left: 3px solid var(--tool-border);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+.tool-call .label { color: var(--tool-border); font-weight: 600; margin-right: 8px; }
+.tool-call .name { color: var(--text); }
+.tool-call .args { color: var(--text-dim); margin-top: 4px; font-size: 12px; white-space: pre-wrap; }
+
+.tool-result {
+  background: var(--result-bg);
+  border-left: 3px solid var(--result-border);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  font-family: 'SF Mono', Consolas, monospace; color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+/* === Text streaming === */
+.text-stream { font-size: 14px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
+.text-stream .cursor {
+  display: inline-block; width: 2px; height: 1em;
+  background: var(--agent-color, var(--accent));
+  margin-left: 2px; vertical-align: text-bottom;
+  animation: blink 0.8s infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.code-block {
+  background: #0a0a0a; border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px; margin: 8px 0;
+  font-family: 'SF Mono', Consolas, monospace; font-size: 13px;
+  line-height: 1.5; overflow-x: auto; white-space: pre;
+}
+
+/* === Summary === */
+.summary {
+  background: var(--summary-bg);
+  border-left: 3px solid var(--summary-border);
+  border-radius: 6px; padding: 10px 12px; font-size: 13px;
+  margin-top: 4px;
+}
+.summary .label {
+  color: var(--summary-border); font-weight: 600;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 4px; display: block;
+}
+
+/* === Error === */
+.error-block {
+  background: var(--error-bg);
+  border-left: 3px solid var(--error-border);
+  border-radius: 6px; padding: 10px 12px; font-size: 13px;
+}
+.error-block .label { color: var(--error-border); font-weight: 600; }
+
+/* === Event Log === */
+.event-log { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.log-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 11px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0;
+}
+.log-header .count { background: var(--bg-message); padding: 2px 8px; border-radius: 10px; font-size: 10px; }
+.log-list { flex: 1; overflow-y: auto; padding: 6px; }
+.log-list::-webkit-scrollbar { width: 4px; }
+.log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.log-item {
+  display: flex; gap: 6px; align-items: flex-start;
+  padding: 5px 7px; border-radius: 3px; font-size: 10px;
+  font-family: 'SF Mono', Consolas, monospace; color: var(--text-dim);
+  animation: logIn 0.2s ease;
+}
+@keyframes logIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+.log-item:hover { background: var(--bg-message); }
+.log-time { color: var(--text-faint); flex-shrink: 0; }
+.log-type { font-weight: 600; min-width: 32px; flex-shrink: 0; }
+.log-type.t1 { color: var(--text); }
+.log-type.t6 { color: var(--researcher); }
+.log-type.t7 { color: #fb923c; }
+.log-type.t8 { color: var(--result-border); }
+.log-type.t9 { color: var(--summary-border); }
+.log-type.t11 { color: var(--error-border); }
+.log-type.t12 { color: var(--sup-color); }
+.log-type.t13 { color: var(--writer); }
+.log-content { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+
+/* === Toast === */
+.toast-container {
+  position: fixed; top: 70px; right: 380px; z-index: 100;
+  display: flex; flex-direction: column; gap: 6px; pointer-events: none;
+}
+.toast {
+  background: var(--bg-elevated); border: 1px solid var(--sup-color);
+  border-radius: 6px; padding: 6px 12px; font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
+  display: flex; align-items: center; gap: 6px;
+}
+.toast .icon { font-size: 14px; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+
+/* === Input bar === */
+.input-bar {
+  padding: 10px 20px; background: var(--bg-elevated);
+  border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; gap: 10px; align-items: center;
+}
+.input-hint { color: var(--text-faint); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Mavis Chat <span>· SSE Demo v6 · 派发面板侧栏化</span></h1>
+  <div class="scenarios">
+    <button class="scenario-btn" data-scenario="researcher">🔍 Researcher</button>
+    <button class="scenario-btn" data-scenario="coder">💻 Coder</button>
+    <button class="scenario-btn" data-scenario="chain">⛓️ Chain</button>
+    <button class="scenario-btn sup-btn" data-scenario="supervisor">🎯 Supervisor</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="chat-area" id="chatArea">
+    <div class="msg msg-agent" style="opacity: 0.6;">
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: var(--accent);">✨</span>
+        <span class="agent-name" style="color: var(--accent);">Mavis</span>
+        <span>· 等待演示</span>
+      </div>
+      <div class="agent-body">
+        <div class="text-stream">选择上方场景：<br>• 基础 3 个：Researcher / Coder / Chain — 顺序流式<br>• <b style="color: var(--sup-color);">Supervisor</b> — 右侧「派发面板」展示多 agent 编排状态</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right-sidebar">
+    <div class="task-panel disabled" id="taskPanel">
+      <div class="task-header">
+        <span>派发面板</span>
+        <span class="badge" id="taskPhaseBadge">—</span>
+      </div>
+      <div class="task-phase idle" id="taskPhase">
+        <span>选择 Supervisor 模式启动演示</span>
+      </div>
+      <div class="task-dispatch" id="taskDispatch" style="display: none;">
+        <span>当前调度：</span>
+        <span class="from" id="dispatchFrom"></span>
+        <span class="arrow">→</span>
+        <span class="to" id="dispatchTo"></span>
+      </div>
+      <div class="task-agents" id="taskAgents">
+        <div class="task-row sup idle" data-key="sup">
+          <span class="icon">🎯</span>
+          <span class="name">Supervisor</span>
+          <span class="bar"><span class="bar-fill"></span></span>
+          <span class="status">空闲</span>
+        </div>
+        <div class="task-row researcher idle" data-key="researcher">
+          <span class="icon">🔍</span>
+          <span class="name">Researcher</span>
+          <span class="bar"><span class="bar-fill"></span></span>
+          <span class="status">空闲</span>
+        </div>
+        <div class="task-row coder idle" data-key="coder">
+          <span class="icon">💻</span>
+          <span class="name">Coder</span>
+          <span class="bar"><span class="bar-fill"></span></span>
+          <span class="status">空闲</span>
+        </div>
+        <div class="task-row analyst idle" data-key="analyst">
+          <span class="icon">📊</span>
+          <span class="name">Analyst</span>
+          <span class="bar"><span class="bar-fill"></span></span>
+          <span class="status">空闲</span>
+        </div>
+        <div class="task-row writer idle" data-key="writer">
+          <span class="icon">✍️</span>
+          <span class="name">Writer</span>
+          <span class="bar"><span class="bar-fill"></span></span>
+          <span class="status">空闲</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="event-log">
+      <div class="log-header">
+        <span>Event Log</span>
+        <span class="count" id="logCount">0</span>
+      </div>
+      <div class="log-list" id="logList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="input-bar">
+  <span class="input-hint">💡 Supervisor 模式时，右侧「派发面板」实时显示编排状态 + 当前调度方</span>
+</div>
+
+<script>
+const state = {
+  scenario: null,
+  running: false,
+  currentAgent: null,
+  agentEl: null,
+  textEl: null,
+  cursorEl: null,
+  fullText: '',
+  logCount: 0
+};
+
+const agentMeta = {
+  sup:        { name: 'Supervisor', icon: '🎯' },
+  researcher: { name: 'Researcher', icon: '🔍' },
+  coder:      { name: 'Coder',      icon: '💻' },
+  analyst:    { name: 'Analyst',    icon: '📊' },
+  writer:     { name: 'Writer',     icon: '✍️' }
+};
+
+const agents = {
+  researcher: { name: 'Researcher', icon: '🔍', color: 'var(--researcher)' },
+  coder:      { name: 'Coder',      icon: '💻', color: 'var(--coder)' },
+  analyst:    { name: 'Analyst',    icon: '📊', color: 'var(--analyst)' },
+  writer:     { name: 'Writer',     icon: '✍️', color: 'var(--writer)' }
+};
+
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const ts = () => new Date().toTimeString().slice(0, 8);
+
+function scrollBottom() {
+  $('chatArea').scrollTop = $('chatArea').scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// === Event Log ===
+function logEvent(type, content) {
+  state.logCount++;
+  $('logCount').textContent = state.logCount;
+  const item = document.createElement('div');
+  item.className = 'log-item';
+  const typeLabel = ({1:'start', 6:'chunk', 7:'tool', 8:'result', 9:'summary', 11:'error', 12:'handoff', 13:'decision'})[type] || `t${type}`;
+  item.innerHTML = `
+    <span class="log-time">${ts()}</span>
+    <span class="log-type t${type}">${typeLabel}</span>
+    <span class="log-content">${escapeHtml(content)}</span>`;
+  $('logList').appendChild(item);
+  $('logList').scrollTop = $('logList').scrollHeight;
+}
+
+// === Toast ===
+function showToast(icon, text) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span class="icon">${icon}</span><span>${escapeHtml(text)}</span>`;
+  $('toastContainer').appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+// === Task Panel 管理 ===
+function setTaskAgentState(key, stateName, statusText) {
+  const row = document.querySelector(`.task-row[data-key="${key}"]`);
+  if (!row) return;
+  row.classList.remove('idle', 'thinking', 'working', 'done', 'failed', 'delegating', 'aggregating');
+  if (stateName) row.classList.add(stateName);
+  const status = row.querySelector('.status');
+  if (status && statusText) status.textContent = statusText;
+  const fill = row.querySelector('.bar-fill');
+  if (fill) {
+    if (stateName === 'working' || stateName === 'thinking') fill.style.width = '70%';
+    else if (stateName === 'done') fill.style.width = '100%';
+    else fill.style.width = '0';
+  }
+}
+
+function setTaskPhase(text, stepText) {
+  const phase = $('taskPhase');
+  const badge = $('taskPhaseBadge');
+  phase.classList.remove('idle');
+  if (stepText) {
+    badge.textContent = stepText;
+    phase.innerHTML = `<span class="step">${stepText}</span><span>${escapeHtml(text)}</span>`;
+  } else {
+    badge.textContent = '—';
+    phase.innerHTML = `<span>${escapeHtml(text)}</span>`;
+  }
+}
+
+function setTaskDispatch(fromKey, toKey, fromLabel, toLabel) {
+  const box = $('taskDispatch');
+  if (!fromKey) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  box.classList.remove('fading');
+  $('dispatchFrom').textContent = fromLabel || (agentMeta[fromKey]?.name || fromKey);
+  $('dispatchTo').textContent = toLabel || (agentMeta[toKey]?.name || toKey);
+}
+
+function clearTaskDispatch() {
+  const box = $('taskDispatch');
+  box.classList.add('fading');
+  setTimeout(() => { box.style.display = 'none'; box.classList.remove('fading'); }, 600);
+}
+
+function resetTaskPanel() {
+  ['sup', 'researcher', 'coder', 'analyst', 'writer'].forEach(k =>
+    setTaskAgentState(k, 'idle', '空闲'));
+  setTaskPhase('准备中…', '');
+  $('taskDispatch').style.display = 'none';
+}
+
+// === 消息构造 ===
+function addUserMsg(text) {
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-user';
+  msg.innerHTML = `<div class="bubble-user">${escapeHtml(text)}</div>`;
+  $('chatArea').appendChild(msg);
+  scrollBottom();
+}
+
+function addSupervisorMsg(thinking, content) {
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-agent msg-supervisor';
+  msg.innerHTML = `
+    <div class="agent-header">
+      <span class="agent-avatar sup">🎯</span>
+      <span class="agent-name" style="color: var(--sup-color);">Supervisor</span>
+      <span class="agent-tag">决策中</span>
+    </div>
+    <div class="agent-body"></div>`;
+  $('chatArea').appendChild(msg);
+  state.agentEl = msg.querySelector('.agent-body');
+  if (thinking) {
+    const t = addThinking(thinking);
+    t.classList.remove('open');
+  }
+  scrollBottom();
+  return state.agentEl;
+}
+
+function startAgent(agentKey, opts = {}) {
+  const a = agents[agentKey];
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-agent';
+  if (opts.handoffFrom) {
+    const fromName = opts.handoffFrom === 'sup' ? 'Supervisor' : agents[opts.handoffFrom].name;
+    msg.innerHTML = `
+      <div class="handoff-badge">🔗 <span>从 ${fromName} 交接</span> <span class="arrow">→</span></div>
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: ${a.color};">${a.icon}</span>
+        <span class="agent-name" style="color: ${a.color};">${a.name}</span>
+        <span>· 接收任务</span>
+      </div>
+      <div class="agent-body"></div>`;
+  } else {
+    msg.innerHTML = `
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: ${a.color};">${a.icon}</span>
+        <span class="agent-name" style="color: ${a.color};">${a.name}</span>
+        <span>· 工作中</span>
+      </div>
+      <div class="agent-body"></div>`;
+  }
+  $('chatArea').appendChild(msg);
+  state.currentAgent = agentKey;
+  state.agentEl = msg.querySelector('.agent-body');
+  scrollBottom();
+  return state.agentEl;
+}
+
+function addThinking(content, isFinal = false) {
+  const wrap = document.createElement('div');
+  wrap.className = 'thinking open';
+  wrap.innerHTML = `
+    <div class="thinking-head">
+      <span class="thinking-arrow">▶</span>
+      <span class="thinking-text">${isFinal ? escapeHtml(content) : '<span class="thinking-dots"></span>'}</span>
+    </div>
+    <div class="thinking-body">${escapeHtml(content)}</div>`;
+  wrap.querySelector('.thinking-head').addEventListener('click', () => wrap.classList.toggle('open'));
+  state.agentEl.appendChild(wrap);
+  scrollBottom();
+  return wrap;
+}
+
+function appendToolCall(name, args) {
+  const el = document.createElement('div');
+  el.className = 'tool-call';
+  el.innerHTML = `
+    <div><span class="label">🔧 TOOL</span><span class="name">${escapeHtml(name)}</span></div>
+    <div class="args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendToolResult(text) {
+  const el = document.createElement('div');
+  el.className = 'tool-result';
+  el.innerHTML = `✅ ${escapeHtml(text)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function startTextStream() {
+  const el = document.createElement('div');
+  el.className = 'text-stream';
+  state.cursorEl = document.createElement('span');
+  state.cursorEl.className = 'cursor';
+  el.appendChild(state.cursorEl);
+  state.textEl = el;
+  state.fullText = '';
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendTextChunk(chunk) {
+  state.fullText += chunk;
+  state.textEl.innerHTML = renderText(state.fullText);
+  state.textEl.appendChild(state.cursorEl);
+  scrollBottom();
+}
+
+function renderText(t) {
+  const parts = t.split(/(```[\s\S]*?```)/g);
+  return parts.map(p => {
+    if (p.startsWith('```')) {
+      const code = p.replace(/^```\w*\n?/, '').replace(/```$/, '');
+      return `<pre class="code-block">${escapeHtml(code)}</pre>`;
+    }
+    return escapeHtml(p);
+  }).join('');
+}
+
+function endTextStream() {
+  if (state.cursorEl) state.cursorEl.remove();
+  state.textEl = null; state.cursorEl = null;
+}
+
+function appendSummary(text) {
+  const el = document.createElement('div');
+  el.className = 'summary';
+  el.innerHTML = `<span class="label">📌 摘要</span>${escapeHtml(text)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendError(msg) {
+  const el = document.createElement('div');
+  el.className = 'error-block';
+  el.innerHTML = `<span class="label">❌ ERROR</span>${escapeHtml(msg)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function finishAgent() {
+  const status = state.agentEl.parentElement.querySelector('.agent-header span:last-child');
+  if (status) status.textContent = '· 完成';
+}
+
+// === 基础场景：3 个不带 Supervisor 的简单流 ===
+const basicScenarios = {
+  researcher: { user: '什么是异方差性？给出定义和直觉解释', run: runResearcher },
+  coder:      { user: '用 Python 写一个快排，要求带注释', run: runCoder },
+  chain:      { user: '分析 A 游戏 2026-05-26 的异常登录可能原因', run: runChain }
+};
+
+async function runResearcher() {
+  const t = addThinking('用户问的是统计概念，先给定义再类比解释...');
+  await sleep(800);
+  t.querySelector('.thinking-text').textContent = '用户问的是统计概念，先给定义再类比解释...';
+  t.querySelector('.thinking-body').textContent = '用户问的是统计概念，先给定义再类比解释...';
+
+  await sleep(400);
+  appendToolCall('wiki_search', { query: '异方差性 heteroscedasticity' });
+  logEvent(7, 'wiki_search');
+  await sleep(700);
+  appendToolResult('3 条相关条目：异方差性定义、White 检验、WLS 修正');
+  logEvent(8, 'wiki ✓');
+
+  await sleep(300);
+  startTextStream();
+  logEvent(6, 'streaming...');
+  for (const p of [
+    '**异方差性** = 回归中误差项的方差不恒定。\n\n',
+    '## 直觉\n',
+    '量小孩 ±0.5cm 是大误差，量大人 ±0.5cm 可忽略——这就是方差随 X 变化。\n\n',
+    '## 定义\n',
+    '在线性回归 `Y = Xβ + ε` 中，若 `Var(εᵢ|Xᵢ) = σᵢ²` 且 `σᵢ² 不全相等`，则存在异方差性。\n\n',
+    '## 影响\n',
+    'OLS 仍无偏但**不再有效**（标准误被低估），t 检验失真。'
+  ]) {
+    await sleep(300);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('异方差 = 误差方差随 X 变；OLS 无偏但失效；White/BP 检验，WLS 修正。');
+  finishAgent();
+}
+
+async function runCoder() {
+  const t = addThinking('用户要 Python 快排，给 Lomuto 分区版本加注释...');
+  await sleep(700);
+  t.querySelector('.thinking-text').textContent = '用户要 Python 快排，给 Lomuto 分区版本加注释...';
+
+  startTextStream();
+  logEvent(6, 'streaming...');
+  for (const p of [
+    '经典 **Lomuto 分区** 快排：\n\n',
+    '```python\n',
+    'def quicksort(arr, lo=0, hi=None):\n',
+    '    if hi is None:\n',
+    '        hi = len(arr) - 1\n',
+    '    if lo < hi:\n',
+    '        p = partition(arr, lo, hi)\n',
+    '        quicksort(arr, lo, p - 1)\n',
+    '        quicksort(arr, p + 1, hi)\n',
+    '\n',
+    'def partition(arr, lo, hi):\n',
+    '    pivot = arr[hi]\n',
+    '    i = lo - 1\n',
+    '    for j in range(lo, hi):\n',
+    '        if arr[j] <= pivot:\n',
+    '            i += 1\n',
+    '            arr[i], arr[j] = arr[j], arr[i]\n',
+    '    arr[i + 1], arr[hi] = arr[hi], arr[i + 1]\n',
+    '    return i + 1\n',
+    '```\n\n',
+    '- 平均 `O(n log n)`，最坏 `O(n²)`（已排序+末位 pivot）\n',
+    '- 优化：三数取中 或 随机 pivot'
+  ]) {
+    await sleep(200);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('给出 Lomuto 快排 + 注释；含复杂度分析与最坏情况优化。');
+  finishAgent();
+}
+
+async function runChain() {
+  startAgent('researcher');
+  logEvent(1, 'researcher');
+  const t1 = addThinking('需先了解该游戏近期登录数据和攻击模式...');
+  await sleep(800);
+  t1.querySelector('.thinking-text').textContent = '需先了解该游戏近期登录数据和攻击模式...';
+
+  await sleep(400);
+  appendToolCall('clickhouse.query', { sql: 'SELECT login_ip, count() c FROM login_events WHERE game_id=? AND ts>now()-1d GROUP BY login_ip HAVING c>100', params: { game_id: 'A' } });
+  logEvent(7, 'clickhouse');
+  await sleep(800);
+  appendToolResult('17 个 IP 24h 登录 >100 次，TOP1=203.0.113.45 跨 12 账号');
+  logEvent(8, 'clickhouse ✓');
+
+  startTextStream();
+  for (const p of [
+    '**判断：撞库/批量登录**\n\n',
+    '- 17 IP 24h >100 次\n',
+    '- TOP1 跨 12 账号\n',
+    '- 凌晨 2-5 点集中\n'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('17 高频 IP，TOP1 跨 12 账号，凌晨集中 → 撞库。');
+  finishAgent();
+  await sleep(500);
+
+  startAgent('coder');
+  logEvent(1, 'coder');
+  const t2 = addThinking('给 Flink + 滑动窗口实时拦截规则...');
+  await sleep(700);
+  t2.querySelector('.thinking-text').textContent = '给 Flink + 滑动窗口实时拦截规则...';
+
+  startTextStream();
+  for (const p of [
+    '实时拦截规则（Flink SQL）：\n\n',
+    '```sql\n',
+    'SELECT ip, count(DISTINCT user_id) u\n',
+    'FROM login_stream\n',
+    'WHERE game_id = \'A\'\n',
+    'GROUP BY ip, TUMBLE(ts, INTERVAL \'1\' MINUTE)\n',
+    'HAVING u > 5\n',
+    '```\n\n',
+    '配合 Redis 黑名单 + 验证码。'
+  ]) {
+    await sleep(200);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('Flink SQL：单 IP/1min/跨 5 账号触发；黑名单+验证码处置。');
+  finishAgent();
+  await sleep(500);
+
+  startAgent('analyst');
+  logEvent(1, 'analyst');
+  const t3 = addThinking('评估上线后误杀率与覆盖度...');
+  await sleep(700);
+  t3.querySelector('.thinking-text').textContent = '评估上线后误杀率与覆盖度...';
+
+  startTextStream();
+  for (const p of [
+    '**风控影响评估**\n\n',
+    '| 指标 | 预期 |\n',
+    '|------|------|\n',
+    '| 误杀率 | ~0.3% |\n',
+    '| 拦截延迟 | <2s |\n',
+    '| 攻击覆盖 | ~80% |\n\n',
+    '建议：10% 灰度 24h 再全量。'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('误杀 0.3% / 覆盖 80%；建议 10% 灰度 24h 后全量。');
+  finishAgent();
+}
+
+// === Supervisor 场景：4 阶段独立演示 ===
+async function runSupervisor() {
+  const userQ = 'A 游戏 24h 内检测到异常登录峰值，定位原因并给出处置建议';
+  addUserMsg(userQ);
+  logEvent(1, 'supervisor: 用户提问');
+  await sleep(400);
+
+  // === Phase 1: Quick Delegate ===
+  setTaskPhase('派发单个 Researcher 调查', 'Phase 1/4');
+  addSupervisorMsg('分析：登录异常 → 需调查数据。任务较简单，单兵 Researcher 处理。');
+  await sleep(700);
+  logEvent(13, 'plan: sup → researcher (quick)');
+  setTaskAgentState('sup', 'delegating', '派发中');
+  setTaskDispatch('sup', 'researcher');
+  showToast('🎯→🔍', 'Supervisor 派发 Researcher');
+  await sleep(600);
+
+  startAgent('researcher', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → researcher');
+  logEvent(1, 'researcher');
+  setTaskAgentState('sup', 'idle', '等待结果');
+  setTaskAgentState('researcher', 'working', '查询中');
+  clearTaskDispatch();
+  await sleep(300);
+
+  const t1 = addThinking('查 24h 内登录异常 IP...');
+  await sleep(600);
+  t1.querySelector('.thinking-text').textContent = '查 24h 内登录异常 IP...';
+  appendToolCall('clickhouse.query', { sql: 'SELECT ip, count(DISTINCT user_id) c FROM login_events WHERE game_id=? AND ts>now()-1d GROUP BY ip HAVING c>10 ORDER BY c DESC LIMIT 20' });
+  logEvent(7, 'clickhouse');
+  await sleep(700);
+  appendToolResult('TOP1: 203.0.113.45 跨 12 账号 / 1872 次（凌晨 2-5 点）');
+  logEvent(8, 'clickhouse ✓');
+
+  startTextStream();
+  for (const p of [
+    '**Phase 1 结果**\n\n',
+    '初步判定：**撞库攻击**。\n',
+    '关键证据：单 IP 跨 12 账号 / 1872 次 / 凌晨集中。\n'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('撞库攻击，单 IP 跨 12 账号凌晨集中。');
+  setTaskAgentState('researcher', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 1 summary');
+  await sleep(400);
+
+  setTaskAgentState('sup', 'aggregating', '汇总中');
+  setTaskDispatch('researcher', 'sup', 'Researcher', 'Supervisor');
+  showToast('🔍→🎯', 'Researcher 回报');
+  await sleep(700);
+  setTaskAgentState('sup', 'idle', '规划下一阶段');
+  clearTaskDispatch();
+  logEvent(13, 'phase 1 done → plan phase 2');
+
+  // === Phase 2: Parallel ===
+  setTaskPhase('并行：Researcher 深入 + Analyst 评估', 'Phase 2/4');
+  addSupervisorMsg('收到初步结论。并行：① Researcher 深入样本分析 ② Analyst 评估业务影响。');
+  await sleep(700);
+  setTaskAgentState('sup', 'delegating', '并行派发');
+  setTaskDispatch('sup', 'researcher + analyst', 'Supervisor', '并行 2 路');
+  showToast('🎯⫼', 'Supervisor 并行派发');
+  await sleep(500);
+  setTaskAgentState('sup', 'idle', '等待');
+  setTaskAgentState('researcher', 'working', '分析样本');
+  setTaskAgentState('analyst', 'working', '评估影响');
+  clearTaskDispatch();
+  await sleep(200);
+
+  startAgent('researcher', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → researcher (parallel)');
+  logEvent(1, 'researcher');
+  const t2a = addThinking('提取 TOP1 IP 的所有登录请求，识别 UA 分布...');
+  await sleep(500);
+  t2a.querySelector('.thinking-text').textContent = '提取 TOP1 IP 的所有登录请求，识别 UA 分布...';
+  startTextStream();
+  for (const p of [
+    '**样本特征**：\n',
+    '- UA: `python-requests/2.28.0` 占 94%（非浏览器）\n',
+    '- 登录间隔：固定 3.2s（脚本化特征）\n',
+    '- 命中账号：12 个，全是历史泄露库\n'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('UA 94% 是 python-requests，3.2s 固定间隔 → 自动化脚本撞库。');
+  setTaskAgentState('researcher', 'done', '完成');
+  finishAgent();
+  await sleep(300);
+
+  startAgent('analyst', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → analyst (parallel)');
+  logEvent(1, 'analyst');
+  const t2b = addThinking('评估 12 个被撞账号的资产价值和潜在损失...');
+  await sleep(500);
+  t2b.querySelector('.thinking-text').textContent = '评估 12 个被撞账号的资产价值和潜在损失...';
+  startTextStream();
+  for (const p of [
+    '**业务影响**：\n',
+    '- 12 账号中：3 个付费用户，2 个高价值\n',
+    '- 已发生异常登录成功率：34%\n',
+    '- 潜在损失：估算 ¥80k 充值资产\n'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('3 付费+2 高价值用户被撞，成功率 34%，潜在损失 ~¥80k。');
+  setTaskAgentState('analyst', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 2 parallel done');
+  await sleep(400);
+
+  setTaskAgentState('sup', 'aggregating', '汇总两路');
+  setTaskDispatch('researcher + analyst', 'sup', '两路并发', 'Supervisor');
+  showToast('🔍📊→🎯', '两路回报');
+  await sleep(700);
+  setTaskAgentState('sup', 'idle', '规划下一阶段');
+  clearTaskDispatch();
+  logEvent(13, 'phase 2 done → plan phase 3');
+
+  // === Phase 3: Pipeline ===
+  setTaskPhase('流水线：Coder 写规则 → Analyst 评估', 'Phase 3/4');
+  addSupervisorMsg('确认是脚本撞库。Coder 出拦截规则，再由 Analyst 评估上线风险。');
+  await sleep(700);
+  setTaskAgentState('sup', 'delegating', '派发 Coder');
+  setTaskDispatch('sup', 'coder');
+  showToast('🎯→💻', 'Supervisor 派发 Coder');
+  await sleep(500);
+  setTaskAgentState('sup', 'idle', '等待');
+  setTaskAgentState('coder', 'working', '编写规则');
+  clearTaskDispatch();
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder');
+  logEvent(1, 'coder');
+  const t3a = addThinking('写 Flink SQL 拦截规则 + 滑窗 + 阈值...');
+  await sleep(500);
+  t3a.querySelector('.thinking-text').textContent = '写 Flink SQL 拦截规则 + 滑窗 + 阈值...';
+
+  startTextStream();
+  for (const p of [
+    '```sql\n',
+    '-- 单 IP 1min 内跨账号数 > 3 触发拦截\n',
+    'SELECT ip, count(DISTINCT user_id) u\n',
+    'FROM login_stream\n',
+    'WHERE game_id = \'A\'\n',
+    'GROUP BY ip, TUMBLE(ts, INTERVAL \'1\' MINUTE)\n',
+    'HAVING u > 3\n',
+    '```\n\n',
+    '配套：UA 含 `python-requests` 直接 403。'
+  ]) { await sleep(200); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('Flink SQL: 1min/跨 3 账号 + UA 黑名单双触发。');
+  setTaskAgentState('coder', 'done', '完成');
+  finishAgent();
+  logEvent(12, 'coder → analyst (peer handoff)');
+  await sleep(400);
+
+  // peer handoff: coder → analyst
+  setTaskAgentState('analyst', 'working', '风险评估');
+  setTaskDispatch('coder', 'analyst', 'Coder', 'Analyst');
+  showToast('💻→📊', 'Coder 交接 Analyst');
+  await sleep(500);
+  clearTaskDispatch();
+  startAgent('analyst', { handoffFrom: 'coder' });
+  logEvent(1, 'analyst');
+  const t3b = addThinking('评估规则的误杀率和上线影响...');
+  await sleep(500);
+  t3b.querySelector('.thinking-text').textContent = '评估规则的误杀率和上线影响...';
+  startTextStream();
+  for (const p of [
+    '**上线风险评估**：\n\n',
+    '| 指标 | 预期 |\n',
+    '|------|------|\n',
+    '| 误杀率 | ~0.4% |\n',
+    '| 拦截延迟 | <2s |\n',
+    '| 攻击覆盖 | ~92% |\n\n',
+    '建议：10% 灰度 6h 后全量。'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('误杀 0.4% / 覆盖 92%；10% 灰度 6h 后全量。');
+  setTaskAgentState('analyst', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 3 pipeline done');
+  await sleep(400);
+
+  setTaskAgentState('sup', 'aggregating', '汇总');
+  setTaskDispatch('analyst', 'sup', 'Analyst', 'Supervisor');
+  showToast('📊→🎯', 'Analyst 回报');
+  await sleep(700);
+  setTaskAgentState('sup', 'idle', '规划下一阶段');
+  clearTaskDispatch();
+  logEvent(13, 'phase 3 done → plan phase 4');
+
+  // === Phase 4: Recovery ===
+  setTaskPhase('Recovery：失败重试 + 降级方案', 'Phase 4/4');
+  addSupervisorMsg('方案需附 1h 紧急上线 SOP。派 Coder 输出回滚脚本。');
+  await sleep(700);
+  setTaskAgentState('sup', 'delegating', '派发 Coder');
+  setTaskDispatch('sup', 'coder');
+  showToast('🎯→💻', 'Supervisor 派发 Coder');
+  await sleep(500);
+  setTaskAgentState('sup', 'idle', '等待');
+  setTaskAgentState('coder', 'working', '尝试中');
+  clearTaskDispatch();
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder');
+  logEvent(1, 'coder');
+  const t4a = addThinking('调用工具生成 K8s 回滚脚本...');
+  await sleep(500);
+  t4a.querySelector('.thinking-text').textContent = '调用工具生成 K8s 回滚脚本...';
+  appendToolCall('kubectl.get_deployments', { namespace: 'risk-control' });
+  logEvent(7, 'kubectl');
+  await sleep(800);
+  appendError('kubectl API timeout (5s) — 集群响应慢');
+  logEvent(11, 'kubectl timeout');
+  setTaskAgentState('coder', 'failed', '失败');
+  finishAgent();
+  await sleep(500);
+
+  setTaskDispatch('coder', 'sup', 'Coder(失败)', 'Supervisor');
+  setTaskAgentState('sup', 'aggregating', '检测到失败');
+  showToast('⚠️', 'Supervisor 检测失败');
+  await sleep(700);
+  clearTaskDispatch();
+  addSupervisorMsg('Coder 调用 kubectl 超时。改用本地 etcd 备份作为降级方案，重试。');
+  logEvent(13, 'recover: switch to etcd fallback');
+  await sleep(500);
+
+  setTaskAgentState('sup', 'delegating', '重试派发');
+  setTaskDispatch('sup', 'coder', 'Supervisor', 'Coder (重试)');
+  showToast('🎯↻💻', 'Supervisor 重试 Coder');
+  await sleep(500);
+  clearTaskDispatch();
+  setTaskAgentState('sup', 'idle', '等待');
+  setTaskAgentState('coder', 'working', '降级方案');
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder (retry)');
+  logEvent(1, 'coder');
+  const t4b = addThinking('改用本地 etcd 备份，避免 kubectl 依赖...');
+  await sleep(500);
+  t4b.querySelector('.thinking-text').textContent = '改用本地 etcd 备份，避免 kubectl 依赖...';
+  appendToolCall('etcd.snapshot', { endpoint: 'localhost:2379' });
+  logEvent(7, 'etcd');
+  await sleep(600);
+  appendToolResult('etcd snapshot 成功 /var/backup/etcd-20260526.bak');
+  logEvent(8, 'etcd ✓');
+
+  startTextStream();
+  for (const p of [
+    '降级方案：使用本地 etcd 快照作为回滚源。\n\n',
+    '```bash\n',
+    '# 1. 停止 risk-control deployment\n',
+    'kubectl scale deploy risk-control --replicas=0\n',
+    '\n',
+    '# 2. 从 etcd snapshot 恢复配置\n',
+    'etcdctl snapshot restore /var/backup/etcd-20260526.bak \\\n',
+    '  --data-dir=/var/lib/etcd-restore\n',
+    '\n',
+    '# 3. 重启并验证\n',
+    'kubectl scale deploy risk-control --replicas=3\n',
+    '```\n'
+  ]) { await sleep(200); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('降级方案：etcd snapshot 回滚，3 步脚本，<5min 完成。');
+  setTaskAgentState('coder', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 4 recovery done');
+  await sleep(400);
+
+  setTaskAgentState('sup', 'aggregating', '生成最终方案');
+  setTaskDispatch('coder', 'sup', 'Coder', 'Supervisor');
+  showToast('💻→🎯', 'Coder 回报');
+  await sleep(700);
+  clearTaskDispatch();
+
+  // === Final summary by Supervisor ===
+  setTaskPhase('生成最终方案', 'Final');
+  setTaskAgentState('sup', 'working', '汇总输出');
+  addSupervisorMsg('');
+  startTextStream();
+  for (const p of [
+    '## 完整处置方案\n\n',
+    '**根因**：203.0.113.45 IP 使用 python-requests 脚本，3.2s 固定间隔，撞 12 个历史泄露账号。\n\n',
+    '**紧急（1h 内）**：\n',
+    '1. 封禁 203.0.113.45 /24 段\n',
+    '2. 12 个被撞账号强制重置密码\n',
+    '3. 部署 Flink 拦截规则（阈值：1min/跨 3 账号 + UA 黑名单）\n\n',
+    '**中期（24h）**：\n',
+    '4. 灰度上线 Analyst 评估方案（10% → 100%）\n',
+    '5. 准备 etcd 快照回滚 SOP（已交付）\n\n',
+    '**长期**：\n',
+    '6. 接入外部泄露库实时比对，主动通知用户改密\n'
+  ]) { await sleep(280); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('根因=脚本撞库；紧急3项/中期2项/长期1项。');
+  setTaskAgentState('sup', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'final summary');
+}
+
+// === 启动器 ===
+async function runScenario(key) {
+  if (state.running) return;
+  state.running = true;
+  state.scenario = key;
+  state.logCount = 0;
+  $('logList').innerHTML = '';
+  $('logCount').textContent = '0';
+  $('chatArea').innerHTML = '';
+  $('toastContainer').innerHTML = '';
+
+  document.querySelectorAll('.scenario-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scenario === key);
+    b.disabled = true;
+  });
+
+  const isSupervisor = (key === 'supervisor');
+  $('taskPanel').classList.toggle('disabled', !isSupervisor);
+  if (isSupervisor) resetTaskPanel();
+  else {
+    setTaskPhase('仅 Supervisor 模式启用', '');
+    ['sup', 'researcher', 'coder', 'analyst', 'writer'].forEach(k =>
+      setTaskAgentState(k, 'idle', '—'));
+    $('taskDispatch').style.display = 'none';
+  }
+
+  if (key === 'supervisor') {
+    try {
+      await runSupervisor();
+    } catch (e) {
+      appendError(String(e));
+      logEvent(11, String(e));
+    }
+  } else {
+    addUserMsg(basicScenarios[key].user);
+    logEvent(1, `scenario=${key}`);
+    await sleep(400);
+    if (key === 'researcher') startAgent('researcher');
+    else if (key === 'coder') startAgent('coder');
+    else if (key === 'chain') { /* runChain handles its own startAgent */ }
+    try {
+      await basicScenarios[key].run();
+    } catch (e) {
+      appendError(String(e));
+      logEvent(11, String(e));
+    }
+  }
+
+  document.querySelectorAll('.scenario-btn').forEach(b => b.disabled = false);
+  state.running = false;
+}
+
+document.querySelectorAll('.scenario-btn').forEach(btn => {
+  btn.addEventListener('click', () => runScenario(btn.dataset.scenario));
+});
+</script>
+
+</body>
+</html>

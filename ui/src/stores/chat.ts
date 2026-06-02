@@ -6,7 +6,10 @@ import {
   compactSession,
   restoreSession as apiRestoreSession,
   type ChatMessage,
+  type LogEntry,
+  type LogEntryType,
   type MetricsData,
+  type TaskPhaseUpdate,
   type TaskUpdate,
 } from '../utils/api'
 import { useSessionsStore } from './sessions'
@@ -34,6 +37,9 @@ export const useChatStore = defineStore('chat', () => {
   const thinkingChunks = ref<ThinkingChunk[]>([])
   const taskItems = ref<TaskUpdate[]>([])
   const metrics = ref<MetricsData | null>(null)
+  const eventLog = ref<LogEntry[]>([])
+  const currentPhase = ref<TaskPhaseUpdate | null>(null)
+  const currentDispatch = ref<{ from: string; to: string; fromLabel?: string; toLabel?: string } | null>(null)
 
   // Message queue for messages sent during processing
   const pendingMessages = ref<string[]>([])
@@ -60,6 +66,10 @@ export const useChatStore = defineStore('chat', () => {
    * session status in sync — otherwise the sidebar shows "处理中" forever
    * while the chat shows "完成".
    */
+  function _appendLog(type: LogEntryType, content: string, agent?: string) {
+    eventLog.value.push({ type, content, timestamp: Date.now(), agent })
+  }
+
   function _reconcileStreamEnd() {
     const now = Date.now()
     for (let i = 0; i < taskItems.value.length; i++) {
@@ -90,6 +100,9 @@ export const useChatStore = defineStore('chat', () => {
     streamingActive.value = false
     pendingMessages.value = []
     taskItems.value = []
+    eventLog.value = []
+    currentPhase.value = null
+    currentDispatch.value = null
     // Clear any queued events
     _eventQueue = []
     if (_eventTimer) { clearTimeout(_eventTimer); _eventTimer = null }
@@ -118,6 +131,18 @@ export const useChatStore = defineStore('chat', () => {
   //   MACRO (0ms): state transitions (start/done/error/task_update) — fire immediately
   let _eventQueue: Array<() => void> = []
   let _eventTimer: ReturnType<typeof setTimeout> | null = null
+
+  function formatElapsed(ms?: number): string {
+    if (!ms || ms < 0) return ''
+    const s = Math.floor(ms / 1000)
+    if (s < 60) return `${s}s`
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    if (m < 60) return `${m}m${sec.toString().padStart(2, '0')}s`
+    const h = Math.floor(m / 60)
+    const min = m % 60
+    return `${h}h${min.toString().padStart(2, '0')}m${sec.toString().padStart(2, '0')}s`
+  }
 
   // Thinking: backend batches chunks, frontend renders directly
   let _thinkChunkCount = 0
@@ -299,7 +324,23 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       messages.value = restored
-      console.log(`[CHAT] restored ${restored.length} messages (hasSummary=${!!data.summary})`)
+      // Restore task_updates and metrics for session history replay
+      if (data.task_updates && data.task_updates.length > 0) {
+        const raw: any[] = data.task_updates
+        taskItems.value = raw.map(t => ({
+          agent: t.agent || '',
+          task: t.task || '',
+          status: t.status || 'completed',
+          state: t.state || undefined,
+          startedAt: t.started_at ?? undefined,
+          endedAt: t.ended_at ?? undefined,
+          elapsedMs: t.elapsed_ms ?? undefined,
+        })) as TaskUpdate[]
+      }
+      if (data.metrics) {
+        metrics.value = data.metrics
+      }
+      console.log(`[CHAT] restored ${restored.length} messages (hasSummary=${!!data.summary}, tasks=${taskItems.value.length})`)
     } catch (e: any) {
       // 404 is expected after DB clear — just reset silently
       if (e.message?.includes('404') || e.message?.includes('Not Found')) {
@@ -455,7 +496,11 @@ export const useChatStore = defineStore('chat', () => {
     _setSessionStatus('processing')
     messages.value.push({ role: 'user', content: task })
     taskItems.value = []
+    eventLog.value = []
+    currentPhase.value = null
+    currentDispatch.value = null
     isLoading.value = true
+    _appendLog('start', '开始调度任务', 'supervisor')
 
     // Track per-agent state
     let supervisorMsgIdx = -1
@@ -529,9 +574,33 @@ export const useChatStore = defineStore('chat', () => {
         if (event.type === 'plan') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
           console.log('[CHAT:ORCH] plan')
+          _appendLog('decision', (event.data as string).slice(0, 80), 'supervisor')
+          const planText = event.data as string
+          // Parse plan steps → pre-populate pending task items in MonitorPanel
+          const stepLines = planText.split('\n').filter(l => /^\s*[-*]\s*\w+:/.test(l))
+          const stepCount = stepLines.length
+          for (const line of stepLines) {
+            const match = line.match(/^\s*[-*]\s*(\w+)\s*:\s*(.+)/)
+            if (match) {
+              const agent = match[1]
+              const task = match[2].trim()
+              // Avoid duplicates if the same step was already added
+              const dup = taskItems.value.find(t => t.agent === agent && t.task === task)
+              if (!dup) {
+                taskItems.value.push({ agent, task, status: 'pending' })
+              }
+            }
+          }
+          const oldStep = (currentPhase as any).value?.step ?? 0
+          const oldTotal = (currentPhase as any).value?.totalSteps ?? 0
+          currentPhase.value = {
+            step: oldStep + 1,
+            totalSteps: Math.max(oldTotal, stepCount || 1),
+            description: stepLines[0]?.replace(/^\s*[-*]\s*\w+:\s*/, '').slice(0, 60) || '',
+          }
           messages.value.push({
             role: 'assistant',
-            content: event.data as string,
+            content: planText,
             agentName: 'supervisor',
             isPlan: true,
           })
@@ -545,11 +614,14 @@ export const useChatStore = defineStore('chat', () => {
             messages.value[idx].handoffTo = agentName
             lastDispatchedAgent = agentName
           }
+          const tcs = event.data as Array<{ name: string; args: Record<string, unknown> }>
+          _appendLog('tool_call', tcs[0]?.name || 'unknown', agentName)
           messages.value[idx].agentStatus = 'working'
-          messages.value[idx].toolCalls = event.data as Array<{ name: string; args: Record<string, unknown> }>
+          messages.value[idx].toolCalls = tcs
         } else if (event.type === 'summary') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
           console.log('[CHAT:ORCH] summary')
+          _appendLog('summary', (event.data as string).slice(0, 80), 'supervisor')
           ensureSupervisorMsg()
           messages.value[supervisorMsgIdx].agentStatus = 'aggregating'
           messages.value[supervisorMsgIdx].summary = event.data as string
@@ -567,15 +639,23 @@ export const useChatStore = defineStore('chat', () => {
             const merged: TaskUpdate = { ...prev, ...update }
             if (update.status === 'running' && prev.status !== 'running') {
               merged.startedAt = now
+              _appendLog('handoff', `${update.agent} 开始执行: ${update.task.slice(0, 50)}`, update.agent)
+              currentDispatch.value = { from: 'supervisor', to: update.agent }
             }
             if ((update.status === 'completed' || update.status === 'failed') && prev.startedAt) {
               merged.endedAt = now
               merged.elapsedMs = now - prev.startedAt
+              _appendLog('handoff', `${update.agent} 完成: ${formatElapsed(merged.elapsedMs)}`, update.agent)
+              currentDispatch.value = { from: update.agent, to: 'supervisor' }
             }
             taskItems.value[existing] = merged
           } else {
             const fresh: TaskUpdate = { ...update }
-            if (update.status === 'running') fresh.startedAt = now
+            if (update.status === 'running') {
+              fresh.startedAt = now
+              _appendLog('start', `${update.agent} 接收任务: ${update.task.slice(0, 50)}`, update.agent)
+              currentDispatch.value = { from: 'supervisor', to: update.agent }
+            }
             taskItems.value.push(fresh)
           }
           // Sync agentStatus on the agent's message bubble
@@ -588,6 +668,7 @@ export const useChatStore = defineStore('chat', () => {
         } else if (event.type === 'metrics') {
           metrics.value = event.data as MetricsData
         } else if (event.type === 'error') {
+          _appendLog('error', String(event.data), agentName)
           messages.value.push({ role: 'system', content: `Error: ${event.data}` })
         }
       }
@@ -741,6 +822,9 @@ export const useChatStore = defineStore('chat', () => {
     thinkingChunks.value = []
     taskItems.value = []
     metrics.value = null
+    eventLog.value = []
+    currentPhase.value = null
+    currentDispatch.value = null
     pendingMessages.value = []
     _stopTypewriter()
     _eventQueue = []
@@ -828,7 +912,7 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
       if (cmd === '/clear') {
-        clearMessages()
+        newSession()
         return
       }
       if (cmd === '/new') {
@@ -877,7 +961,9 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages, isLoading, streamingActive, sessionId,
     typewriterState, thinkingChunks, taskItems, metrics, pendingMessages,
+    eventLog, currentPhase, currentDispatch,
     sendOrchestrate, sendACP, send, abort, abortAndSend,
     clearMessages, newSession, restoreSession,
+    formatElapsed,
   }
 })

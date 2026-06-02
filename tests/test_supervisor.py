@@ -267,9 +267,12 @@ class TestSupervisorRun:
                     events.append(event)
 
                 types = [e["type"] for e in events]
-                assert "plan" in types
                 assert "message" in types
+                assert "metrics" in types
                 assert "done" in types
+                # Direct-answer shortcut skips plan/summary events
+                assert "plan" not in types
+                assert "summary" not in types
 
     @pytest.mark.asyncio
     async def test_run_no_plan_fallback(self):

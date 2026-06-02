@@ -54,7 +54,7 @@ def create_graph(config: AgentConfig | None = None) -> StateGraph:
     graph.add_conditional_edges("think", should_continue, {"tools": "tools", END: END})
     graph.add_edge("tools", "think")
 
-    return graph.compile()
+    return graph.compile().with_config({"recursion_limit": 200})
 
 
 graph = create_graph()

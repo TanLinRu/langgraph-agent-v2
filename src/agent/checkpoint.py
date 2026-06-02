@@ -46,6 +46,7 @@ def _get_conn() -> sqlite3.Connection:
         ("status", "TEXT", "DEFAULT 'active'"),
         ("acp_session_id", "TEXT", "DEFAULT ''"),
         ("project_path", "TEXT", "DEFAULT ''"),
+        ("metrics", "TEXT", "DEFAULT NULL"),
     ]:
         try:
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {dtype} {default}")
@@ -69,6 +70,22 @@ def _get_conn() -> sqlite3.Connection:
             called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            task TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            state TEXT DEFAULT NULL,
+            started_at REAL DEFAULT NULL,
+            ended_at REAL DEFAULT NULL,
+            elapsed_ms INTEGER DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_updates_session ON task_updates(session_id)")
     # Agent configuration
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agents (
@@ -262,6 +279,83 @@ def get_session_summary(session_id: str) -> str:
     row = conn.execute("SELECT summary FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
     conn.close()
     return row[0] if row and row[0] else ""
+
+
+def save_task_update(
+    session_id: str,
+    agent: str,
+    task: str,
+    status: str,
+    state: str | None = None,
+    started_at: float | None = None,
+    ended_at: float | None = None,
+    elapsed_ms: int | None = None,
+) -> None:
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO task_updates (session_id, agent, task, status, state, started_at, ended_at, elapsed_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, agent, task, status, state, started_at, ended_at, elapsed_ms),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_task_updates(session_id: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT agent, task, status, state, started_at, ended_at, elapsed_ms FROM task_updates WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "agent": r[0],
+            "task": r[1],
+            "status": r[2],
+            "state": r[3],
+            "started_at": r[4],
+            "ended_at": r[5],
+            "elapsed_ms": r[6],
+        }
+        for r in rows
+    ]
+
+
+def save_metrics(session_id: str, metrics_json: str) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN metrics TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    conn.execute(
+        "UPDATE sessions SET metrics = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+        (metrics_json, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_metrics(session_id: str) -> dict | None:
+    conn = _get_conn()
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN metrics TEXT DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass
+    row = conn.execute("SELECT metrics FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    conn.close()
+    if row and row[0]:
+        try:
+            return json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return None
+
+
+def delete_task_updates(session_id: str) -> None:
+    conn = _get_conn()
+    conn.execute("DELETE FROM task_updates WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
 
 
 def compact_session(session_id: str, summary: str) -> int:

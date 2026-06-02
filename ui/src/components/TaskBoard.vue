@@ -5,7 +5,7 @@ export interface TaskItem {
   agent: string
   task: string
   status: 'pending' | 'running' | 'completed' | 'failed'
-  state?: 'idle' | 'thinking' | 'working' | 'done' | 'failed'
+  state?: 'idle' | 'thinking' | 'working' | 'delegating' | 'aggregating' | 'done' | 'failed'
   startedAt?: number
   endedAt?: number
   elapsedMs?: number

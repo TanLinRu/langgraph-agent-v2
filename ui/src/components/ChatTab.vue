@@ -138,9 +138,41 @@ function handleFileClick(path: string) {
 }
 
 // Auto-scroll
+const isNearBottom = ref(true)
+const _scrollThreshold = 100
+
+function checkNearBottom() {
+  const el = messagesRef.value
+  if (!el) return
+  isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < _scrollThreshold
+}
+
+function scrollToBottom() {
+  const el = messagesRef.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  isNearBottom.value = true
+}
+
+function autoScroll() {
+  if (!isNearBottom.value) return
+  const el = messagesRef.value
+  if (!el) return
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
+
 watch(() => chat.messages.length, async () => {
   await nextTick()
-  messagesRef.value?.scrollTo({ top: messagesRef.value.scrollHeight, behavior: 'smooth' })
+  autoScroll()
+})
+
+// Also scroll when content of the last message changes (streaming)
+watch(() => {
+  const last = chat.messages[chat.messages.length - 1]
+  return last ? last.content + (last.thinking || '') : ''
+}, async () => {
+  await nextTick()
+  autoScroll()
 })
 </script>
 
@@ -169,7 +201,10 @@ watch(() => chat.messages.length, async () => {
       </div>
     </div>
     <StatusBar :isProcessing="chat.isLoading" />
-    <div class="chat-messages" ref="messagesRef">
+    <div class="chat-messages" ref="messagesRef" @scroll="checkNearBottom">
+      <button v-if="!isNearBottom" class="scroll-bottom-btn" @click="scrollToBottom" title="滚动到底部">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
       <!-- Empty state -->
       <div v-if="chat.messages.length === 0" class="welcome">
         <div class="welcome-icon">✦</div>
@@ -231,7 +266,24 @@ watch(() => chat.messages.length, async () => {
   flex: 1; overflow-y: auto; padding: 24px 28px;
   display: flex; flex-direction: column; gap: 16px;
   scroll-behavior: smooth;
+  position: relative;
 }
+
+.scroll-bottom-btn {
+  position: sticky; bottom: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 10;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  color: var(--text-secondary); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: all 0.2s;
+  animation: fadeIn 0.2s ease;
+  margin-top: -44px;
+  flex-shrink: 0;
+}
+.scroll-bottom-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.scroll-bottom-btn:active { transform: translateX(-50%) scale(0.92); }
 
 /* Welcome */
 .welcome {

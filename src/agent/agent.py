@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.errors import GraphRecursionError
 
 from src.agent.audit_logger import log_audit_event
 from src.agent.config import AgentConfig
@@ -173,30 +174,38 @@ class Agent:
         _event_count = 0
         _t0 = time.time()
 
-        async for event in self.agent_graph.astream_events({"messages": messages}, version="v2"):
-            kind = event["event"]
+        try:
+            async for event in self.agent_graph.astream_events(
+                {"messages": messages},
+                {"recursion_limit": 200},
+                version="v2",
+            ):
+                kind = event["event"]
 
-            if kind == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                # reasoning_content 通过 ChatDeepSeek 自动提取到 additional_kwargs
-                reasoning = chunk.additional_kwargs.get("reasoning_content")
-                if reasoning:
-                    if not thinking_started:
-                        yield {"type": "thinking_start"}
-                        thinking_started = True
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    reasoning = chunk.additional_kwargs.get("reasoning_content")
+                    if reasoning:
+                        if not thinking_started:
+                            yield {"type": "thinking_start"}
+                            thinking_started = True
+                            _event_count += 1
+                            logger.info("[SSE-TRACE] %s thinking_start emitted", _ts())
+                        yield {"type": "thinking", "data": reasoning}
                         _event_count += 1
-                        logger.info("[SSE-TRACE] %s thinking_start emitted", _ts())
-                    yield {"type": "thinking", "data": reasoning}
-                    _event_count += 1
-                elif chunk.content:
-                    content_parts.append(chunk.content)
+                    elif chunk.content:
+                        content_parts.append(chunk.content)
 
-            elif kind == "on_tool_start":
-                yield {
-                    "type": "tool_call",
-                    "data": [{"name": event["name"], "args": event["data"].get("input", {})}],
-                }
-                _event_count += 1
+                elif kind == "on_tool_start":
+                    yield {
+                        "type": "tool_call",
+                        "data": [{"name": event["name"], "args": event["data"].get("input", {})}],
+                    }
+                    _event_count += 1
+
+        except GraphRecursionError:
+            logger.warning("[AGENT] GraphRecursionError: too many tool calls, yielding error event")
+            yield {"type": "error", "data": "工具调用次数过多，已终止。请简化问题或分步提问。"}
 
         if thinking_started:
             yield {"type": "thinking_done"}

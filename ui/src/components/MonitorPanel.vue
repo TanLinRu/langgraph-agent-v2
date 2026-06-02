@@ -2,41 +2,12 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
 import ConvAvatar from './ConvAvatar.vue'
-import TaskGraph from './TaskGraph.vue'
+import PhaseHeader from './PhaseHeader.vue'
+import DispatchIndicator from './DispatchIndicator.vue'
+import AgentTaskPanel from './AgentTaskPanel.vue'
+import EventLog from './EventLog.vue'
 
 const chat = useChatStore()
-
-// Track per-task "just-completed" flash so we can replay the success animation
-const flashingTasks = ref<Set<string>>(new Set())
-let flashTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
-
-function taskKey(t: { agent: string; task: string }) {
-  return `${t.agent}::${t.task}`
-}
-
-watch(() => chat.taskItems, (newItems, oldItems) => {
-  if (!oldItems) return
-  for (const n of newItems) {
-    const prev = oldItems.find(o => o.agent === n.agent && o.task === n.task)
-    if (prev && prev.status === 'running' && n.status === 'completed') {
-      const key = taskKey(n)
-      flashingTasks.value.add(key)
-      const prevTimer = flashTimers.get(key)
-      if (prevTimer) clearTimeout(prevTimer)
-      const t = setTimeout(() => {
-        flashingTasks.value.delete(key)
-        flashingTasks.value = new Set(flashingTasks.value)
-        flashTimers.delete(key)
-      }, 1200)
-      flashTimers.set(key, t)
-    }
-  }
-}, { deep: true })
-
-onUnmounted(() => {
-  for (const t of flashTimers.values()) clearTimeout(t)
-  flashTimers.clear()
-})
 
 // Session timer
 const sessionElapsedMs = ref(0)
@@ -79,6 +50,37 @@ const estimatedCost = computed(() => (totalTokens.value * 0.000003).toFixed(4))
 
 // Task items from SSE events
 const taskItems = computed(() => chat.taskItems)
+const eventLog = computed(() => chat.eventLog)
+const currentPhase = computed(() => chat.currentPhase)
+const currentDispatch = computed(() => chat.currentDispatch)
+
+// Flash tracking for agent completion events
+const completedTaskKeys = ref<Set<string>>(new Set())
+let flashTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+
+watch(() => chat.taskItems, (newItems, oldItems) => {
+  if (!oldItems) return
+  for (const n of newItems) {
+    const prev = oldItems.find(o => o.agent === n.agent && o.task === n.task)
+    if (prev && prev.status === 'running' && n.status === 'completed') {
+      const key = `${n.agent}::${n.task}`
+      completedTaskKeys.value.add(key)
+      const prevTimer = flashTimers.get(key)
+      if (prevTimer) clearTimeout(prevTimer)
+      const t = setTimeout(() => {
+        completedTaskKeys.value.delete(key)
+        completedTaskKeys.value = new Set(completedTaskKeys.value)
+        flashTimers.delete(key)
+      }, 1200)
+      flashTimers.set(key, t)
+    }
+  }
+}, { deep: true })
+
+onUnmounted(() => {
+  for (const t of flashTimers.values()) clearTimeout(t)
+  flashTimers.clear()
+})
 </script>
 
 <template>
@@ -111,11 +113,17 @@ const taskItems = computed(() => chat.taskItems)
       </div>
     </div>
 
-    <!-- Sub-task scheduling (graph view) -->
-    <div v-if="taskItems.length" class="monitor-section">
+    <!-- Sub-task scheduling (card view) -->
+    <div v-if="taskItems.length || currentPhase" class="monitor-section">
       <div class="monitor-section-title">子任务调度</div>
-      <div class="monitor-card monitor-card-graph" style="--mc-color: var(--color-green)">
-        <TaskGraph :tasks="taskItems" :flashing="flashingTasks" />
+      <div class="monitor-card monitor-card-tasks" style="--mc-color: var(--color-green)">
+        <PhaseHeader :phase="currentPhase" />
+        <DispatchIndicator :dispatch="currentDispatch" />
+        <AgentTaskPanel :tasks="taskItems" :metrics="metrics" />
+      </div>
+      <div class="monitor-card monitor-card-log" style="--mc-color: var(--accent)">
+        <div class="monitor-section-subtitle">事件日志</div>
+        <EventLog :entries="eventLog" />
       </div>
     </div>
 
@@ -168,15 +176,27 @@ const taskItems = computed(() => chat.taskItems)
   font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px;
   color: var(--text-tertiary); margin-bottom: 8px; font-weight: 650;
 }
+.monitor-section-subtitle {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--text-faint); margin-bottom: 4px; font-weight: 600;
+}
 .monitor-card {
   background: var(--bg-card);
   border: 1px solid var(--border-light);
-  border-radius: 11px; padding: 14px 16px; margin-bottom: 10px;
+  border-radius: 11px; padding: 12px 0;
+  margin-bottom: 10px;
   border-left: 2px solid var(--mc-color, var(--border));
+  overflow: hidden;
+}
+.monitor-card-tasks {
+  padding: 0;
+}
+.monitor-card-log {
+  padding: 10px 0;
 }
 .monitor-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 7px 0; border-bottom: 1px solid var(--border-light);
+  padding: 7px 14px; border-bottom: 1px solid var(--border-light);
 }
 .monitor-row:last-child { border-bottom: none; }
 .monitor-label {
@@ -193,7 +213,7 @@ const taskItems = computed(() => chat.taskItems)
 /* Agent breakdown */
 .monitor-agent-row {
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 0; border-bottom: 1px solid var(--border-light);
+  padding: 8px 14px; border-bottom: 1px solid var(--border-light);
 }
 .monitor-agent-row:last-child { border-bottom: none; }
 .monitor-agent-icon { width: 28px; height: 28px; flex-shrink: 0; }
@@ -209,7 +229,5 @@ const taskItems = computed(() => chat.taskItems)
 .monitor-bar-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
 .monitor-bar-fill.thinking { background: linear-gradient(90deg,#818cf8,#6366f1); }
 
-.monitor-card-graph { padding: 12px 10px; }
-
-.monitor-empty { font-size: 12px; color: var(--text-faint); padding: 8px 0; text-align: center; }
+.monitor-empty { font-size: 12px; color: var(--text-faint); padding: 8px 14px; text-align: center; }
 </style>

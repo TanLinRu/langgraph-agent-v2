@@ -153,6 +153,19 @@ class CustomSupervisor:
             yield {"type": "done"}
             return
 
+        # Direct-answer shortcut: all steps are "direct" agent,
+        # skip sub-agent dispatch and answer directly.
+        if all(s["agent"] == "direct" for s in steps):
+            yield {"type": "message", "data": plan_text, "agent_name": "supervisor"}
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            yield {
+                "type": "metrics",
+                "data": {"elapsed_ms": elapsed_ms, "agent_calls": 0, "tokens": {}},
+                "agent_name": "supervisor",
+            }
+            yield {"type": "done"}
+            return
+
         yield {"type": "plan", "data": plan_text, "agent_name": "supervisor"}
 
         # ── Phase 3: Dispatch to Sub-agents ────────────────────────
@@ -276,24 +289,19 @@ class CustomSupervisor:
                 "agent_name": "supervisor",
             }
 
-        # ── Phase 4: Summarize ─────────────────────────────────────
-        if results:
-            if len(results) == 1:
-                summary = results[0]["result"].strip() or f"由 {results[0]['agent']} 完成"
-            else:
-                results_text = "\n\n".join(
-                    f"**{r['agent']}** ({r['task']}):\n{r['result']}" for r in results
-                )
-                summary_prompt = [
-                    {"role": "system", "content": "You are a supervisor. Summarize the results from your team concisely."},
-                    {"role": "user", "content": f"Task: {task}\n\nResults:\n{results_text}\n\nProvide a concise summary."},
-                ]
-
-                summary = ""
-                async for chunk in self.model.astream(summary_prompt):
-                    if chunk.content:
-                        summary += chunk.content
-
+        # ── Phase 4: Summarize (multi-agent only) ──────────────────
+        if len(results) > 1:
+            results_text = "\n\n".join(
+                f"**{r['agent']}** ({r['task']}):\n{r['result']}" for r in results
+            )
+            summary_prompt = [
+                {"role": "system", "content": "You are a supervisor. Summarize the results from your team concisely."},
+                {"role": "user", "content": f"Task: {task}\n\nResults:\n{results_text}\n\nProvide a concise summary."},
+            ]
+            summary = ""
+            async for chunk in self.model.astream(summary_prompt):
+                if chunk.content:
+                    summary += chunk.content
             yield {"type": "summary", "data": summary, "agent_name": "supervisor"}
 
         # ── Emit final metrics ─────────────────────────────────────
