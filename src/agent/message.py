@@ -95,10 +95,10 @@ class Message:
     def from_db_row_verbose(cls, row) -> Message:
         row_tuple = tuple(row)
         if len(row_tuple) >= 9:
-            role, content, thinking, tool_calls_json, compacted, name, msg_id, session_id, created_at = row_tuple[:9]
+            msg_id, session_id, created_at, role, content, thinking, tool_calls_json, compacted, name = row_tuple[:9]
         else:
             padded = row_tuple + (None,) * (9 - len(row_tuple))
-            role, content, thinking, tool_calls_json, compacted, name, msg_id, session_id, created_at = padded
+            msg_id, session_id, created_at, role, content, thinking, tool_calls_json, compacted, name = padded
         tool_calls = None
         if tool_calls_json:
             try:
