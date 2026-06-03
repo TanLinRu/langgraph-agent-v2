@@ -1,4 +1,4 @@
-"""Tests for CustomSupervisor — plan parsing, code extraction, and mock flows."""
+"""Tests for Orchestrator — plan parsing, code extraction, and mock flows."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -177,36 +177,34 @@ class TestExtractCode:
         assert _extract_code(text) == "print('hello')"
 
 
-# ── CustomSupervisor Init ───────────────────────────────────────
+# ── Orchestrator Init ───────────────────────────────────────────
 
 
-class TestCustomSupervisorInit:
+class TestOrchestratorInit:
     def test_init_with_mock_model(self):
-        with patch("src.agent.supervisor.resolve_model") as mock_resolve:
+        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
             mock_model = MagicMock()
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.supervisor.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
-                from src.agent.supervisor import CustomSupervisor
+                from src.agent.orchestrator import Orchestrator
 
                 config = AgentConfig()
-                supervisor = CustomSupervisor(config)
-
-                # Supervisor now uses config_manager, agents built from JSON config
-                assert isinstance(supervisor.agents, dict)
-                assert len(supervisor.agents) > 0
+                orch = Orchestrator(config)
+                assert isinstance(orch.sub_agents, dict)
+                assert "direct" in orch.sub_agents
 
 
-# ── Supervisor Run ──────────────────────────────────────────────
+# ── Orchestrator Run ────────────────────────────────────────────
 
 
-class TestSupervisorRun:
+class TestOrchestratorRun:
     @pytest.mark.asyncio
     async def test_run_single_agent(self):
-        with patch("src.agent.supervisor.resolve_model") as mock_resolve:
+        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(reasoning="I need to think..."),
@@ -214,7 +212,7 @@ class TestSupervisorRun:
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.supervisor.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.create_agent") as mock_create:
                 mock_agent = AsyncMock()
                 mock_agent.astream_events = MagicMock(return_value=_mock_agent_stream_events([
                     {"event": "on_chat_model_stream", "data": {"chunk": _make_chunk(content="hello world")}},
@@ -222,13 +220,13 @@ class TestSupervisorRun:
                 mock_create.return_value = mock_agent
 
                 from src.agent.config import AgentConfig
-                from src.agent.supervisor import CustomSupervisor
+                from src.agent.orchestrator import Orchestrator
 
                 config = AgentConfig()
-                supervisor = CustomSupervisor(config)
+                orch = Orchestrator(config)
 
                 events = []
-                async for event in supervisor.run("test task"):
+                async for event in orch.run("test task"):
                     events.append(event)
 
                 types = [e["type"] for e in events]
@@ -241,71 +239,64 @@ class TestSupervisorRun:
 
     @pytest.mark.asyncio
     async def test_run_direct_agent(self):
-        with patch("src.agent.supervisor.resolve_model") as mock_resolve:
+        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="- direct: print hello"),
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.supervisor.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
-                from src.agent.supervisor import CustomSupervisor
+                from src.agent.orchestrator import Orchestrator
 
                 config = AgentConfig()
-                supervisor = CustomSupervisor(config)
-
-                # Mock execute_code tool
-                mock_tool = AsyncMock()
-                mock_tool.ainvoke.return_value = "hello"
-                supervisor.tool_map["execute_code"] = mock_tool
+                orch = Orchestrator(config)
 
                 events = []
-                async for event in supervisor.run("print hello"):
+                async for event in orch.run("print hello"):
                     events.append(event)
 
                 types = [e["type"] for e in events]
                 assert "message" in types
                 assert "metrics" in types
                 assert "done" in types
-                # Direct-answer shortcut skips plan/summary events
-                assert "plan" not in types
+                # Direct-answer shortcut: orchestrator emits just message+metrics+done
                 assert "summary" not in types
 
     @pytest.mark.asyncio
     async def test_run_no_plan_fallback(self):
-        with patch("src.agent.supervisor.resolve_model") as mock_resolve:
+        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="I can answer directly: 42"),
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.supervisor.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
-                from src.agent.supervisor import CustomSupervisor
+                from src.agent.orchestrator import Orchestrator
 
                 config = AgentConfig()
-                supervisor = CustomSupervisor(config)
+                orch = Orchestrator(config)
 
                 events = []
-                async for event in supervisor.run("what is 42"):
+                async for event in orch.run("what is 42"):
                     events.append(event)
 
                 types = [e["type"] for e in events]
                 assert "message" in types
                 assert "done" in types
-                # No plan event since no valid plan was parsed
-                assert "plan" not in types
+                # No plan parsed → falls back to direct agent
 
     @pytest.mark.asyncio
     async def test_run_acp_agent_dispatch(self):
-        """Supervisor dispatches to an ACP agent (opencode) and streams events."""
-        with patch("src.agent.supervisor.resolve_model") as mock_resolve:
+        """Orchestrator dispatches to an ACP agent (opencode) and streams events."""
+        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="- opencode: initialize opencode agent"),
@@ -324,23 +315,24 @@ class TestSupervisorRun:
                 mock_get_acp.return_value = mock_acp
 
                 from src.agent.config import AgentConfig
-                from src.agent.supervisor import CustomSupervisor
+                from src.agent.orchestrator import Orchestrator
 
                 config = AgentConfig()
-                supervisor = CustomSupervisor(config)
+                orch = Orchestrator(config)
 
                 events = []
-                async for event in supervisor.run("initialize opencode"):
+                async for event in orch.run("initialize opencode"):
                     events.append(event)
 
                 types = [e["type"] for e in events]
                 assert "plan" in types
-                assert "task_update" in types  # supervisor dispatches opencode as task_update
+                assert "task_update" in types
                 assert "message" in types
                 assert "done" in types
+
                 # The opencode agent_name should be set on ACP events
                 acp_events = [e for e in events if e.get("agent_name") == "opencode"]
-                assert len(acp_events) >= 3  # thinking + message + thinking_done
+                assert len(acp_events) >= 3
                 acp_types = [e["type"] for e in acp_events]
                 assert "thinking" in acp_types
                 assert "message" in acp_types

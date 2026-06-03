@@ -1,8 +1,9 @@
 """Tests for directory browser (path picker backend)."""
-import pytest
 from pathlib import Path
 
-from src.agent.file_service import browse_directories, PICKER_SKIP_DIRS
+import pytest
+
+from src.agent.file_service import PICKER_SKIP_DIRS, browse_directories
 
 
 def test_browse_root(tmp_path: Path):

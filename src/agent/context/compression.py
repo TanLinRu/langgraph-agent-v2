@@ -8,33 +8,50 @@ class ContextCompressor:
     def __init__(self, config: AgentConfig) -> None:
         self.max_tokens = config.max_tokens
         self.threshold = config.compression_threshold
-        self.keep_recent = 5
+        self.keep_recent_turns = 3
 
     def should_compress(self, messages: list[BaseMessage]) -> bool:
         token_count = count_tokens(messages)
         return token_count > int(self.max_tokens * self.threshold)
 
-    def extract_system_and_rest(self, messages: list[BaseMessage]) -> tuple[SystemMessage | None, list[BaseMessage]]:
-        if messages and isinstance(messages[0], SystemMessage):
-            return messages[0], messages[1:]
-        return None, messages
+    @staticmethod
+    def extract_turns(messages: list[BaseMessage]) -> list[list[BaseMessage]]:
+        """Group messages into turns (HumanMessage → AIMessage → tool/ToolMessage pairs)."""
+        turns: list[list[BaseMessage]] = []
+        current: list[BaseMessage] = []
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                if current:
+                    turns.append(current)
+                current = [msg]
+            else:
+                current.append(msg)
+        if current:
+            turns.append(current)
+        return turns
 
-    async def compress(self, messages: list[BaseMessage], llm=None) -> tuple[str, list[BaseMessage]]:
-        if len(messages) <= self.keep_recent:
-            return "", messages
-
-        recent = messages[-self.keep_recent:]
-        old = messages[:-self.keep_recent]
-
-        summary = await self._summarize(old, llm)
-        return summary, recent
+    async def compress(self, messages: list[BaseMessage], llm=None, force: bool = False) -> tuple[str, list[BaseMessage]]:
+        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
+        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+        if not non_system:
+            return "", system_msgs
+        turns = self.extract_turns(non_system)
+        if not force and len(turns) <= self.keep_recent_turns:
+            return "", system_msgs + non_system
+        if len(turns) <= self.keep_recent_turns:
+            return "", system_msgs + non_system
+        old_turns = turns[:-self.keep_recent_turns]
+        recent_turns = turns[-self.keep_recent_turns:]
+        old_msgs = [m for turn in old_turns for m in turn]
+        recent_msgs = [m for turn in recent_turns for m in turn]
+        summary = await self._summarize(old_msgs, llm)
+        return summary, system_msgs + recent_msgs
 
     async def _summarize(self, messages: list[BaseMessage], llm=None) -> str:
         if llm is None:
             return self._fallback_summary(messages)
 
         input_text = self._messages_to_text(messages)
-        # Limit input size to avoid exceeding context window
         if len(input_text) > 30000:
             input_text = input_text[:15000] + "\n\n[... truncated ...]\n\n" + input_text[-15000:]
 
@@ -80,7 +97,7 @@ class ContextCompressor:
                 if len(content) > 500:
                     content = content[:500] + "..."
                 parts.append(f"[user] {content}")
-        return "\n".join(parts)  # Keep ALL messages, not just last 15
+        return "\n".join(parts)
 
     def _messages_to_text(self, messages: list[BaseMessage]) -> str:
         parts = []

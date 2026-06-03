@@ -83,7 +83,7 @@ def test_orchestrate_sse_format(client):
 
     mock_supervisor = MagicMock()
 
-    async def mock_run(task):
+    async def mock_run(task, history=None, summary=""):
         yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
         yield {"type": "thinking", "data": "thinking...", "agent_name": "supervisor"}
         yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}
@@ -95,8 +95,8 @@ def test_orchestrate_sse_format(client):
 
     mock_supervisor.run = mock_run
 
-    original = server.supervisor_instance
-    server.supervisor_instance = mock_supervisor
+    original = server.orchestrator_instance
+    server.orchestrator_instance = mock_supervisor
     try:
         resp = client.post("/api/orchestrate", json={"task": "test"}, headers={"Accept": "text/event-stream"})
         assert resp.status_code == 200
@@ -120,7 +120,7 @@ def test_orchestrate_sse_format(client):
         assert len(plan_events) == 1
         assert plan_events[0]["agent_name"] == "supervisor"
     finally:
-        server.supervisor_instance = original
+        server.orchestrator_instance = original
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_orchestrate_acp_dispatch(client):
 
     mock_supervisor = MagicMock()
 
-    async def mock_run(task):
+    async def mock_run(task, history=None, summary=""):
         yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
         yield {"type": "thinking", "data": "planning...", "agent_name": "supervisor"}
         yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}
@@ -147,8 +147,8 @@ async def test_orchestrate_acp_dispatch(client):
 
     mock_supervisor.run = mock_run
 
-    original = server.supervisor_instance
-    server.supervisor_instance = mock_supervisor
+    original = server.orchestrator_instance
+    server.orchestrator_instance = mock_supervisor
     try:
         resp = client.post("/api/orchestrate", json={"task": "test"}, headers={"Accept": "text/event-stream"})
         assert resp.status_code == 200
@@ -179,4 +179,42 @@ async def test_orchestrate_acp_dispatch(client):
         session_ids = [e.get("session_id") for e in events if e.get("session_id")]
         assert len(session_ids) > 0
     finally:
-        server.supervisor_instance = original
+        server.orchestrator_instance = original
+
+
+def test_stats_tools_endpoint(client):
+    """GET /api/stats/tools returns aggregated tool-call counts."""
+    from src.agent import checkpoint
+
+    session_id = checkpoint.create_session(title="stats-test")
+    checkpoint.record_tool_usage("test_tool", session_id)
+
+    resp = client.get("/api/stats/tools")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tools" in data
+    assert isinstance(data["tools"], list)
+    names = {t["name"] for t in data["tools"]}
+    assert "test_tool" in names
+
+    checkpoint.delete_session(session_id)
+
+
+def test_delete_session_cascades_task_updates(client):
+    """DELETE /api/sessions/{id} also clears task_updates for that session."""
+    from src.agent import checkpoint
+
+    session_id = checkpoint.create_session(title="cascade-test")
+    checkpoint.save_task_update(session_id, "coder", "do thing", "completed", "result")
+
+    # Verify task_updates row exists
+    rows = checkpoint.load_task_updates(session_id)
+    assert len(rows) >= 1
+
+    # Delete the session
+    resp = client.delete(f"/api/sessions/{session_id}")
+    assert resp.status_code == 200
+
+    # task_updates for that session should be gone
+    rows_after = checkpoint.load_task_updates(session_id)
+    assert rows_after == []

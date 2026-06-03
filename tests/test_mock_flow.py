@@ -117,8 +117,9 @@ async def test_multi_round_compression(monkeypatch):
     # Verify summary is non-empty
     assert len(summary) > 0, "Summary should not be empty after compressing 8 rounds"
 
-    # Verify recent messages are kept (keep_recent=5)
-    assert len(recent) <= 5
+    # Verify recent messages are kept (keep_recent_turns=3 → up to 6 messages)
+    assert len(recent) <= 6
+    assert len(recent) >= 1
 
     # Rebuild messages as agent would
     new_system = SystemMessage(content=f"You are a helpful assistant.\n\n[Conversation History]\n{summary}")

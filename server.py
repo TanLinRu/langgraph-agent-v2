@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from src.agent._utils import SSE_HEADERS, is_punctuation_only
 from src.agent.agent import Agent
 from src.agent.checkpoint import (
     compact_session as db_compact_session,
@@ -19,7 +20,9 @@ from src.agent.checkpoint import (
 from src.agent.checkpoint import (
     create_session,
     delete_session,
+    delete_task_updates_for_sessions,
     get_session_summary,
+    get_tool_usage_stats,
     load_history,
     load_history_with_meta,
     load_metrics,
@@ -30,6 +33,7 @@ from src.agent.checkpoint import (
     save_task_update,
     save_turn,
     update_session_duration,
+    update_session_project_path,
     update_session_status,
 )
 from src.agent.checkpoint import (
@@ -39,9 +43,8 @@ from src.agent.config import AgentConfig
 from src.agent.config_manager import get_config_manager
 from src.agent.context.compression import ContextCompressor
 from src.agent.context.memory import MemoryManager
-from src.agent.event_bus import event_bus
 from src.agent.file_service import build_file_tree, read_file_content
-from src.agent.supervisor import CustomSupervisor
+from src.agent.orchestrator import Orchestrator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,14 +72,14 @@ def get_memory() -> MemoryManager:
     return memory
 
 
-supervisor_instance: CustomSupervisor | None = None
+orchestrator_instance: Orchestrator | None = None
 
 
-def get_supervisor() -> CustomSupervisor:
-    global supervisor_instance
-    if supervisor_instance is None:
-        supervisor_instance = CustomSupervisor(config)
-    return supervisor_instance
+def get_supervisor() -> Orchestrator:
+    global orchestrator_instance
+    if orchestrator_instance is None:
+        orchestrator_instance = Orchestrator(config)
+    return orchestrator_instance
 
 
 @asynccontextmanager
@@ -366,64 +369,71 @@ async def chat_stream(message: str = Query(...), session_id: str | None = Query(
 @app.post("/api/orchestrate")
 async def orchestrate(request: OrchestrateRequest):
     session_id = request.session_id or create_session()
-    supervisor = get_supervisor()
+    orchestrator = get_supervisor()
     update_session_status(session_id, "processing")
     _start_time = time.time()
+    history = load_history(session_id)
+    session_summary = get_session_summary(session_id)
 
     async def stream():
-        thinking_content = ""
         _message_accum = ""
+        _thinking_accum = ""
+        _agent_name = "supervisor"
         _user_saved = False
-        _saved = False
         _sse_idx = 0
 
-        def _flush_message():
-            nonlocal _message_accum, thinking_content, _saved
-            content_to_save = _message_accum
-            if content_to_save:
-                trimmed = content_to_save.strip()
-                _is_punctuation_only = trimmed and all(ch in ".,!?;:。,!?;:、…·" for ch in trimmed)
-                _is_too_short = len(trimmed) < 3 and not thinking_content.strip()
-                if _is_punctuation_only or _is_too_short:
-                    logger.info("[ORCH] skip trivial message: agent=%s content=%r", agent_name, content_to_save)
-                else:
+        def _save_accumulated():
+            nonlocal _message_accum, _thinking_accum
+            if _message_accum and _message_accum.strip():
+                if not is_punctuation_only(_message_accum) and len(_message_accum.strip()) >= 3:
                     try:
-                        save_message(session_id, "ai", content_to_save, thinking=thinking_content, name=agent_name)
-                        _saved = True
+                        save_message(
+                            session_id, "ai", _message_accum,
+                            thinking=_thinking_accum or "",
+                            name=_agent_name,
+                        )
                     except Exception as save_err:
                         logger.warning("[ORCH] save_message failed: %s", save_err)
-            thinking_content = ""
             _message_accum = ""
+            _thinking_accum = ""
 
         try:
-            async for event in _passthrough(supervisor.run(request.task)):
+            async for event in _passthrough(
+                orchestrator.run(request.task, history=history or None, summary=session_summary)
+            ):
                 event["session_id"] = session_id
                 _sse_idx += 1
-
-                agent_name = event.get("agent_name", "supervisor")
+                _agent_name = event.get("agent_name", "supervisor")
+                etype = event.get("type", "")
                 payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                logger.info("[ORCH] #%d type=%s agent=%s bytes=%d", _sse_idx, event["type"], agent_name, len(payload))
-
-                if event["type"] == "thinking":
-                    thinking_content += event.get("data", "")
-                elif event["type"] == "plan":
-                    thinking_content += f"\n[Plan]\n{event.get('data', '')}"
-                elif event["type"] == "message":
-                    _message_accum += event.get("data", "")
-                else:
-                    _flush_message()
 
                 try:
                     if not _user_saved:
                         save_message(session_id, "human", request.task)
                         _user_saved = True
 
-                    if event["type"] == "plan":
-                        save_message(session_id, "ai", event.get("data", ""), name="plan")
-                        logger.info("[ORCH] plan: %s", event.get("data", "")[:100])
-                    elif event["type"] == "task_update":
-                        tu = event["data"]
-                        logger.info("[ORCH] task_update: agent=%s status=%s", tu.get("agent"), tu.get("status"))
+                    if etype == "message":
+                        _message_accum += event.get("data", "") or ""
+                    elif etype == "thinking":
+                        _thinking_accum += event.get("data", "") or ""
+                    elif etype == "thinking_done":
+                        pass
+                    elif etype == "plan":
+                        _save_accumulated()
+                        try:
+                            save_message(session_id, "ai", event.get("data", ""), name="plan")
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save plan failed: %s", save_err)
+                    elif etype == "tool_call":
+                        tcs = event.get("data", []) or []
+                        if tcs:
+                            tc_json = json.dumps(tcs, ensure_ascii=False)
+                            try:
+                                save_message(session_id, "ai", "", tool_calls=tc_json, name=_agent_name)
+                            except Exception as save_err:
+                                logger.warning("[ORCH] save tool_call failed: %s", save_err)
+                    elif etype == "task_update":
+                        tu = event.get("data", {}) or {}
                         try:
                             save_task_update(
                                 session_id,
@@ -437,35 +447,32 @@ async def orchestrate(request: OrchestrateRequest):
                             )
                         except Exception as save_err:
                             logger.warning("[ORCH] save_task_update failed: %s", save_err)
-                    elif event["type"] == "tool_call":
-                        tool_calls_json = json.dumps(event.get("data", []), ensure_ascii=False)
-                        save_message(session_id, "ai", "", tool_calls=tool_calls_json, name=agent_name)
-                        logger.info("[ORCH] tool_call: %s agent=%s", event["data"][0]["name"] if event["data"] else "", agent_name)
-                    elif event["type"] == "summary":
-                        save_message(session_id, "ai", event.get("data", ""), thinking=thinking_content or None, name="summary")
-                        logger.info("[ORCH] summary: len=%d", len(event.get("data", "")))
-                    elif event["type"] == "metrics":
-                        logger.info("[ORCH] metrics: %s", event["data"])
+                    elif etype == "summary":
+                        _save_accumulated()
                         try:
-                            save_metrics(session_id, json.dumps(event["data"], ensure_ascii=False))
+                            save_message(
+                                session_id, "ai", event.get("data", ""),
+                                thinking=_thinking_accum or None,
+                                name="summary",
+                            )
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save summary failed: %s", save_err)
+                    elif etype == "metrics":
+                        try:
+                            save_metrics(session_id, json.dumps(event.get("data", {}), ensure_ascii=False))
                         except Exception as save_err:
                             logger.warning("[ORCH] save_metrics failed: %s", save_err)
                 except Exception as save_err:
-                    logger.warning("[ORCH] save_message failed: %s", save_err)
+                    logger.warning("[ORCH] persistence failed: %s", save_err)
 
                 yield payload
                 await asyncio.sleep(0)
 
-            _flush_message()
+            _save_accumulated()
             yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error("[ORCH] stream error: %s", e, exc_info=True)
-            if not _saved:
-                try:
-                    content = _message_accum or "[Error occurred]"
-                    save_message(session_id, "ai", content, thinking=thinking_content or None, name=agent_name)
-                except Exception:
-                    pass
+            _save_accumulated()
             yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
         finally:
             duration_ms = int((time.time() - _start_time) * 1000)
@@ -476,39 +483,11 @@ async def orchestrate(request: OrchestrateRequest):
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )
 
 
-# ── SSE Events ──────────────────────────────────────────────────
-
-
-@app.get("/api/events/stream/{stream_id}")
-async def sse_stream(stream_id: str):
-    async def event_generator():
-        queue = event_bus.subscribe(stream_id)
-        try:
-            while True:
-                event = await queue.get()
-                yield event_bus.format_sse(event)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            event_bus.unsubscribe(stream_id, queue)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
+# ── SSE Events (handled per-endpoint: /chat, /api/orchestrate, /api/acp/send) ──
 
 
 # ── Sessions ────────────────────────────────────────────────────
@@ -518,6 +497,12 @@ async def sse_stream(stream_id: str):
 async def list_sessions_endpoint(user_id: str | None = Query(None)):
     sessions = db_list_sessions(user_id=user_id, ttl_hours=config.session_ttl_hours)
     return {"sessions": sessions}
+
+
+@app.get("/api/stats/tools")
+async def stats_tools():
+    """Aggregate tool-call counts across all sessions for the monitoring dashboard."""
+    return {"tools": get_tool_usage_stats()}
 
 
 @app.post("/api/sessions")
@@ -540,6 +525,7 @@ async def get_session(session_id: str):
         "messages": messages,
         "summary": summary,
         "task_updates": task_updates,
+        "task_phases": [],
         "metrics": metrics,
     }
 
@@ -558,13 +544,13 @@ async def update_session_project_path_endpoint(session_id: str, request: dict):
     project_path = request.get("project_path", "").strip()
     if not project_path:
         raise HTTPException(status_code=400, detail="project_path is required")
-    from src.agent.checkpoint import update_session_project_path
     update_session_project_path(session_id, project_path)
     return {"session_id": session_id, "project_path": project_path}
 
 
 @app.delete("/api/sessions/{session_id}")
 async def delete_session_endpoint(session_id: str):
+    delete_task_updates_for_sessions([session_id])
     delete_session(session_id)
     return {"status": "ok"}
 
@@ -585,13 +571,13 @@ async def compact_endpoint(request: CompactRequest):
     # Use the compression module with LLM for high-quality summary
     compressor = ContextCompressor(config)
     try:
-        summary_text, recent = await compressor.compress(history, llm=get_agent().model)
+        summary_text, recent = await compressor.compress(history, llm=get_agent().model, force=True)
     except Exception as e:
         logger.warning("[Compact] LLM summary failed, using fallback: %s", e)
-        summary_text, recent = await compressor.compress(history)
+        summary_text, recent = await compressor.compress(history, force=True)
 
-    # Persist: mark old messages as compacted, save summary
-    marked = db_compact_session(request.session_id, summary_text)
+    # Persist: mark old messages as compacted, save summary (keep last 1 turn for LLM context)
+    marked = db_compact_session(request.session_id, summary_text, keep=1)
     logger.info("[Compact] session=%s marked=%d kept=%d summary_len=%d", request.session_id, marked, len(recent), len(summary_text))
 
     return {
@@ -921,7 +907,6 @@ async def get_file_tree(root: str | None = Query(None)):
 async def pick_directory():
     """Open native OS folder picker dialog and return selected path."""
     import os
-    import subprocess
     import tempfile
     import time
 
