@@ -1,6 +1,5 @@
 """Verify _passthrough batching and orchestrator accumulation end-to-end."""
 import asyncio
-import json
 import sys
 from collections.abc import AsyncIterator
 
@@ -53,16 +52,16 @@ async def test_passthrough_batching():
     # All message content must be preserved (nothing lost)
     all_msg = "".join(e["data"] for e in batched if e["type"] == "message")
     assert all_msg == "Here is the review of file. It looks good.", f"MISMATCH: {all_msg!r}"
-    print(f"  message content preserved [ok]")
+    print("  message content preserved [ok]")
 
     # Non-message/thinking events pass through unchanged
     plan = [e for e in batched if e["type"] == "plan"]
     assert len(plan) == 1 and plan[0]["data"] == "Review the file"
-    print(f"  plan event preserved [ok]")
+    print("  plan event preserved [ok]")
 
     metrics = [e for e in batched if e["type"] == "metrics"]
     assert len(metrics) == 1
-    print(f"  metrics event preserved [ok]")
+    print("  metrics event preserved [ok]")
 
     print(f"\n  ✅ _passthrough batching: {len(batched)} events (was {len(events)} input)")
 

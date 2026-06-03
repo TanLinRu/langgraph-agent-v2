@@ -63,10 +63,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       const exists = sessions.value.some(s => s.session_id === savedId)
       if (exists) {
         activeSessionId.value = savedId
-        // Trigger chat store to restore this session
-        const chat = useChatStore()
-        chat.sessionId = savedId
-        chat.restoreSession()
+        // chat store watcher will restore this session
         return
       }
     }
@@ -74,9 +71,6 @@ export const useSessionsStore = defineStore('sessions', () => {
     // Step 3: No valid saved session — pick the most recent one
     if (sessions.value.length > 0) {
       activeSessionId.value = sessions.value[0].session_id
-      const chat = useChatStore()
-      chat.sessionId = sessions.value[0].session_id
-      chat.restoreSession()
     } else {
       activeSessionId.value = null
     }

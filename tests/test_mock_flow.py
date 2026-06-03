@@ -64,9 +64,9 @@ def test_skills_loading():
 
 
 def test_checkpoint_session(tmp_path, monkeypatch):
-    from src.agent import checkpoint
+    from src.agent import db as checkpoint
 
-    monkeypatch.setattr(checkpoint, "_DB_PATH", tmp_path / "sessions.db")
+    monkeypatch.setattr("src.agent.db.connection._DB_PATH", tmp_path / "sessions.db")
     sid = checkpoint.create_session()
     assert checkpoint.session_exists(sid) is True
     sessions = checkpoint.list_sessions()

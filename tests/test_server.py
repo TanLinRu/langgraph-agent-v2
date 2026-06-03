@@ -184,7 +184,7 @@ async def test_orchestrate_acp_dispatch(client):
 
 def test_stats_tools_endpoint(client):
     """GET /api/stats/tools returns aggregated tool-call counts."""
-    from src.agent import checkpoint
+    from src.agent import db as checkpoint
 
     session_id = checkpoint.create_session(title="stats-test")
     checkpoint.record_tool_usage("test_tool", session_id)
@@ -202,7 +202,7 @@ def test_stats_tools_endpoint(client):
 
 def test_delete_session_cascades_task_updates(client):
     """DELETE /api/sessions/{id} also clears task_updates for that session."""
-    from src.agent import checkpoint
+    from src.agent import db as checkpoint
 
     session_id = checkpoint.create_session(title="cascade-test")
     checkpoint.save_task_update(session_id, "coder", "do thing", "completed", "result")

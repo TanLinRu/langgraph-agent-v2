@@ -182,11 +182,11 @@ class TestExtractCode:
 
 class TestOrchestratorInit:
     def test_init_with_mock_model(self):
-        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
+        with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = MagicMock()
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.orchestrator.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.core.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
@@ -204,7 +204,7 @@ class TestOrchestratorInit:
 class TestOrchestratorRun:
     @pytest.mark.asyncio
     async def test_run_single_agent(self):
-        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
+        with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(reasoning="I need to think..."),
@@ -212,7 +212,7 @@ class TestOrchestratorRun:
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.orchestrator.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.core.create_agent") as mock_create:
                 mock_agent = AsyncMock()
                 mock_agent.astream_events = MagicMock(return_value=_mock_agent_stream_events([
                     {"event": "on_chat_model_stream", "data": {"chunk": _make_chunk(content="hello world")}},
@@ -239,14 +239,14 @@ class TestOrchestratorRun:
 
     @pytest.mark.asyncio
     async def test_run_direct_agent(self):
-        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
+        with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="- direct: print hello"),
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.orchestrator.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.core.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
@@ -268,14 +268,14 @@ class TestOrchestratorRun:
 
     @pytest.mark.asyncio
     async def test_run_no_plan_fallback(self):
-        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
+        with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="I can answer directly: 42"),
             ]))
             mock_resolve.return_value = mock_model
 
-            with patch("src.agent.orchestrator.create_agent") as mock_create:
+            with patch("src.agent.orchestrator.core.create_agent") as mock_create:
                 mock_create.return_value = MagicMock()
 
                 from src.agent.config import AgentConfig
@@ -296,7 +296,7 @@ class TestOrchestratorRun:
     @pytest.mark.asyncio
     async def test_run_acp_agent_dispatch(self):
         """Orchestrator dispatches to an ACP agent (opencode) and streams events."""
-        with patch("src.agent.orchestrator.resolve_model") as mock_resolve:
+        with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(return_value=_mock_model_stream([
                 _make_chunk(content="- opencode: initialize opencode agent"),

@@ -14,10 +14,14 @@ from sse_starlette.sse import EventSourceResponse
 
 from src.agent._utils import SSE_HEADERS, is_punctuation_only
 from src.agent.agent import Agent
-from src.agent.checkpoint import (
+from src.agent.config import AgentConfig
+from src.agent.config_manager import get_config_manager
+from src.agent.context.compression import ContextCompressor
+from src.agent.context.memory import MemoryManager
+from src.agent.db import (
     compact_session as db_compact_session,
 )
-from src.agent.checkpoint import (
+from src.agent.db import (
     create_session,
     delete_session,
     delete_task_updates_for_sessions,
@@ -36,13 +40,9 @@ from src.agent.checkpoint import (
     update_session_project_path,
     update_session_status,
 )
-from src.agent.checkpoint import (
+from src.agent.db import (
     list_sessions as db_list_sessions,
 )
-from src.agent.config import AgentConfig
-from src.agent.config_manager import get_config_manager
-from src.agent.context.compression import ContextCompressor
-from src.agent.context.memory import MemoryManager
 from src.agent.file_service import build_file_tree, read_file_content
 from src.agent.orchestrator import Orchestrator
 
@@ -372,7 +372,7 @@ async def orchestrate(request: OrchestrateRequest):
     orchestrator = get_supervisor()
     update_session_status(session_id, "processing")
     _start_time = time.time()
-    history = load_history(session_id)
+    history = load_history_with_meta(session_id)
     session_summary = get_session_summary(session_id)
 
     async def stream():

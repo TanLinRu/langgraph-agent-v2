@@ -10,8 +10,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from src.agent.acp_client import ACPClient
-from src.agent.checkpoint import get_acp_session_id, update_acp_session_id
 from src.agent.config_manager import get_config_manager
+from src.agent.db import get_acp_session_id, update_acp_session_id
 
 logger = logging.getLogger(__name__)
 
