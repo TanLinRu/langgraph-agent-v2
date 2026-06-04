@@ -1,4 +1,4 @@
-"""Tools — dynamically loaded from config/tools.json."""
+"""Tools — dynamically loaded from config/tools.json with hot-reload support."""
 
 import importlib
 import logging
@@ -6,8 +6,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _load_tools_from_config():
-    """Load tools dynamically from config/tools.json."""
+def get_tools():
+    """Load tools dynamically from config/tools.json via ConfigManager (supports hot-reload)."""
     from src.agent.config_manager import get_config_manager
 
     cm = get_config_manager()
@@ -32,6 +32,6 @@ def get_tools_config():
     return get_config_manager().get_tools()
 
 
-TOOLS = _load_tools_from_config()
+TOOLS = get_tools()
 
-__all__ = ["TOOLS", "get_tools_config"]
+__all__ = ["TOOLS", "get_tools", "get_tools_config"]

@@ -10,6 +10,7 @@ import StatusBar from './StatusBar.vue'
 import InputBar from './InputBar.vue'
 import DirectoryPicker from './DirectoryPicker.vue'
 import TopologyBar from './TopologyBar.vue'
+import PermissionDialog from './PermissionDialog.vue'
 
 const chat = useChatStore()
 const sessions = useSessionsStore()
@@ -74,6 +75,7 @@ const isThinkingActive = ref(false)
 
 // Task items tracking (use store-level taskItems shared with MonitorPanel)
 const taskItems = computed(() => chat.taskItems)
+const permissionRequest = computed(() => chat.permissionRequest)
 
 // Watch for thinking state changes
 watch(() => chat.messages, (msgs) => {
@@ -229,7 +231,7 @@ watch(() => {
         />
         <!-- Regular message -->
         <ChatMessage
-          v-if="msg.role !== 'assistant' || msg.content || msg.toolCalls?.length"
+          v-if="msg.role !== 'assistant' || msg.content || msg.toolCalls?.length || msg.thinking || msg.isThinking"
           :msg="msg"
           :index="i"
           :isTyping="isTyping(i)"
@@ -250,7 +252,10 @@ watch(() => {
       </div>
     </div>
 
-    <InputBar v-model="input" :isProcessing="chat.isLoading" :pendingCount="chat.pendingMessages.length" @send="send" @abort="chat.abort()" />
+    <PermissionDialog v-if="permissionRequest" :request="permissionRequest" />
+    <div class="input-zone">
+      <InputBar v-model="input" :isProcessing="chat.isLoading" :pendingCount="chat.pendingMessages.length" :permissionPending="!!permissionRequest" @send="send" @abort="chat.abort()" />
+    </div>
     <DirectoryPicker v-if="showPathPicker" @select="onPathPicked" @close="showPathPicker = false" />
   </div>
 </template>

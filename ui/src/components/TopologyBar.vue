@@ -4,12 +4,13 @@ import { useChatStore } from '../stores/chat'
 
 const chat = useChatStore()
 
-type SupState = 'idle' | 'thinking' | 'delegating' | 'aggregating' | 'done' | 'failed'
+type SupState = 'idle' | 'thinking' | 'delegating' | 'working' | 'aggregating' | 'done' | 'failed'
 
 const STATUS_TEXTS: Record<SupState, string> = {
   idle: '空闲',
   thinking: '思考中',
   delegating: '派发中',
+  working: '工作中',
   aggregating: '汇总中',
   done: '完成',
   failed: '失败',
@@ -17,6 +18,15 @@ const STATUS_TEXTS: Record<SupState, string> = {
 
 const supState = ref<SupState>('idle')
 const supStatusText = computed(() => STATUS_TEXTS[supState.value])
+
+const agentLabel = computed(() => {
+  const items = chat.taskItems
+  if (!items.length) return ''
+  const first = items.find(t => t.agent && t.agent !== 'supervisor')
+  return first?.agent || ''
+})
+
+const activeLabel = computed(() => agentLabel.value || 'Supervisor')
 
 watch([() => chat.taskItems, () => chat.isLoading], () => {
   const items = chat.taskItems
@@ -27,8 +37,9 @@ watch([() => chat.taskItems, () => chat.isLoading], () => {
   const anyRunning = items.some(t => t.status === 'running')
   const allDone = items.every(t => t.status === 'completed' || t.status === 'failed')
   const anyFailed = items.some(t => t.status === 'failed')
+  const isDirectAgent = agentLabel.value && !items.some(t => t.agent === 'supervisor')
   if (anyRunning) {
-    supState.value = 'delegating'
+    supState.value = isDirectAgent ? 'working' : 'delegating'
   } else if (allDone) {
     if (anyFailed) supState.value = 'failed'
     else supState.value = 'aggregating'
@@ -37,8 +48,8 @@ watch([() => chat.taskItems, () => chat.isLoading], () => {
   }
 }, { immediate: true, deep: true })
 
-watch(supState, (s, old) => {
-  if ((s === 'done' || s === 'aggregating') && old === 'aggregating') {
+watch(supState, (s) => {
+  if (s === 'aggregating') {
     setTimeout(() => {
       if (!chat.taskItems.some(t => t.status === 'running')) {
         supState.value = 'done'
@@ -51,6 +62,7 @@ const visible = computed(() => chat.isLoading || chat.taskItems.length > 0)
 const dotColor = computed(() => {
   switch (supState.value) {
     case 'delegating': return '#fbbf24'
+    case 'working': return '#60a5fa'
     case 'aggregating':
     case 'done': return '#34d399'
     case 'failed': return '#ef4444'
@@ -64,7 +76,7 @@ const dotColor = computed(() => {
   <div v-if="visible" class="topology-bar">
     <div class="status-line">
       <span class="status-dot" :style="{ background: dotColor }"></span>
-      <span class="status-label">Supervisor</span>
+      <span class="status-label">{{ activeLabel }}</span>
       <span class="status-sep">·</span>
       <span class="status-text">{{ supStatusText }}</span>
     </div>

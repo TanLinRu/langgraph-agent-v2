@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import type { ChatMessage, TaskUpdate, MetricsData } from '../utils/api'
+import type { ChatMessage, PermissionRequest, TaskUpdate, MetricsData } from '../utils/api'
 
 type ToolCallShape = { name: string; args: Record<string, unknown>; status?: 'pending' | 'running' | 'done' | 'failed' }
 
@@ -15,6 +15,7 @@ export function useMessageManager() {
   const thinkTypeState = ref<Record<number, { display: string; full: string; done: boolean; pendingDone: boolean }>>({})
   const taskItems = ref<TaskUpdate[]>([])
   const metrics = ref<MetricsData | null>(null)
+  const auditSummary = ref<string | null>(null)
 
   // ── 基础消息操作 ──────────────────────────────────────────
 
@@ -46,6 +47,10 @@ export function useMessageManager() {
   function ensureAssistant(agentName: string): number {
     for (let i = messages.value.length - 1; i >= 0; i--) {
       const m = messages.value[i]
+      if (m.role === 'assistant' && m.agentName === agentName && !m.isSummary && !m.isPlan) return i
+    }
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
       if (m.role === 'assistant' && m.agentName === agentName) return i
     }
     return addAssistant(agentName)
@@ -65,6 +70,7 @@ export function useMessageManager() {
     if (messages.value[index]) {
       messages.value[index].isThinking = true
       messages.value[index].thinking = ''
+      messages.value[index].thinkingDone = false
     }
   }
 
@@ -75,7 +81,10 @@ export function useMessageManager() {
   }
 
   function setThinkingDone(index: number): void {
-    if (messages.value[index]) messages.value[index].isThinking = false
+    if (messages.value[index]) {
+      messages.value[index].isThinking = false
+      messages.value[index].thinkingDone = true
+    }
   }
 
   function mergeToolCalls(agentName: string, toolCalls: ToolCallShape[]): void {
@@ -88,7 +97,8 @@ export function useMessageManager() {
   }
 
   function addError(content: string): void {
-    messages.value.push({ role: 'system', content: `Error: ${content}` })
+    const text = content.replace(/^Error:\s*/i, '')
+    messages.value.push({ role: 'system', content: `Error: ${text}` })
   }
 
   function setAgentStatus(index: number, status: string): void {
@@ -136,8 +146,28 @@ export function useMessageManager() {
     }
   }
 
+  function setAuditSummary(text: string): void {
+    auditSummary.value = text
+  }
+
+  function clearCompletedToolCalls(): void {
+    for (const m of messages.value) {
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        m.toolCalls = m.toolCalls.filter(tc => tc.status === 'pending' || tc.status === 'running' || tc.status === 'done')
+        if (m.toolCalls.length === 0) delete m.toolCalls
+      }
+    }
+  }
+
   function setMetrics(data: MetricsData): void {
-    metrics.value = data
+    if (metrics.value) {
+      metrics.value = {
+        ...data,
+        tokens: { ...metrics.value.tokens, ...data.tokens },
+      }
+    } else {
+      metrics.value = data
+    }
   }
 
   // ── 批量操作 ──────────────────────────────────────────────
@@ -152,14 +182,16 @@ export function useMessageManager() {
     thinkTypeState.value = {}
     taskItems.value = []
     metrics.value = null
+    auditSummary.value = null
   }
 
   function resetTaskItems(): void {
     taskItems.value = []
     metrics.value = null
+    auditSummary.value = null
   }
 
-  /** 流结束时,把所有 running/pending 任务标记为 failed */
+  /** 流结束时,把所有 running/pending 任务标记为 failed + 清理 toolCalls */
   function reconcileStreamEnd(): void {
     const now = Date.now()
     for (let i = 0; i < taskItems.value.length; i++) {
@@ -171,11 +203,23 @@ export function useMessageManager() {
         }
       }
     }
+    for (const m of messages.value) {
+      if (m.toolCalls) {
+        m.toolCalls = m.toolCalls.map(tc => {
+          if (tc.status === 'pending' || tc.status === 'running') {
+            return { ...tc, status: 'done' as const }
+          }
+          return tc
+        })
+      }
+    }
+    clearCompletedToolCalls()
   }
 
   return {
     // 状态
     messages, typewriterState, thinkTypeState, taskItems, metrics,
+    auditSummary,
     // 基础操作
     addUser, addSystem, addAssistant, ensureAssistant,
     appendContent, setContent,
@@ -189,6 +233,8 @@ export function useMessageManager() {
     setAgentStatus, setHandoff,
     // 特殊消息
     pushSummary, pushPlan,
+    // 审计
+    setAuditSummary, clearCompletedToolCalls,
     // 任务/度量
     updateTaskItem, setMetrics,
     // 批量操作

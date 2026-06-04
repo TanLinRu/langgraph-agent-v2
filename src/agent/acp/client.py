@@ -3,6 +3,8 @@
 Connects to `opencode acp` for persistent agent sessions.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -26,11 +28,7 @@ class ACPEvent:
 class ACPNativeClient:
     """Native ACP client using JSON-RPC 2.0 over stdio.
 
-    Manages a persistent `opencode acp` subprocess. Supports:
-    - initialize (protocol handshake)
-    - session/new, session/load, session/close
-    - session/prompt (streaming)
-    - session/cancel
+    Manages a persistent `opencode acp` subprocess.
     """
 
     def __init__(self, command: str, args: list[str] | None = None, timeout: int = 600):
@@ -45,6 +43,8 @@ class ACPNativeClient:
         self._notification_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=0)
         self._connected = False
         self._initialized = False
+        self._pending_permissions: dict[str, asyncio.Future] = {}
+        self._last_event_time: float = 0.0
 
     async def connect(self, cwd: str | None = None):
         """Start `opencode acp` subprocess and initialize protocol."""
@@ -70,7 +70,6 @@ class ACPNativeClient:
         self._connected = True
         self._reader_task = asyncio.create_task(self._reader_loop())
         self._stderr_task = asyncio.create_task(self._stderr_loop())
-
         await self._initialize()
 
     def _resolve_command(self) -> str:
@@ -144,7 +143,6 @@ class ACPNativeClient:
 
         future = asyncio.get_event_loop().create_future()
         self._pending[req_id] = future
-
         await self._write(req)
 
         try:
@@ -166,6 +164,15 @@ class ACPNativeClient:
         if params:
             req["params"] = params
         await self._write(req)
+
+    async def _send_response(self, req_id: int, result: Any = None, error: dict | None = None):
+        """Send JSON-RPC response."""
+        resp: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id}
+        if error:
+            resp["error"] = error
+        else:
+            resp["result"] = result
+        await self._write(resp)
 
     async def _write(self, msg: dict[str, Any]):
         """Write a JSON-RPC message to stdin."""
@@ -207,7 +214,7 @@ class ACPNativeClient:
         return result
 
     async def prompt(self, session_id: str, message: str) -> AsyncIterator[ACPEvent]:
-        """Send a prompt and stream ACP events."""
+        """Send a prompt and stream ACP events with 5s polling, permission handling."""
         self._request_id += 1
         req_id = self._request_id
         req = {
@@ -216,15 +223,15 @@ class ACPNativeClient:
             "method": "session/prompt",
             "params": {
                 "sessionId": session_id,
-                "prompt": [
-                    {"type": "text", "text": message},
-                ],
+                "prompt": [{"type": "text", "text": message}],
             },
         }
         future = asyncio.get_event_loop().create_future()
         self._pending[req_id] = future
-
         await self._write(req)
+
+        self._last_event_time = asyncio.get_event_loop().time()
+        idle_timeout = self.timeout + 60
 
         try:
             while True:
@@ -232,8 +239,10 @@ class ACPNativeClient:
                 done, pending = await asyncio.wait(
                     [notification_task, future],
                     return_when=asyncio.FIRST_COMPLETED,
-                    timeout=self.timeout,
+                    timeout=5,
                 )
+
+                now = asyncio.get_event_loop().time()
 
                 if future in done:
                     notification_task.cancel()
@@ -262,12 +271,22 @@ class ACPNativeClient:
 
                 if notification_task in done:
                     notification = notification_task.result()
+                    self._last_event_time = now
                     try:
                         for event in self._parse_notification(notification):
-                            yield event
+                            if event.type == "permission_request":
+                                yield event
+                            else:
+                                yield event
                     except Exception as e:
                         logger.error("[ACPNative] notification parse error: %s\n%s", e, traceback.format_exc())
                         logger.error("[ACPNative] raw notification: %s", json.dumps(notification, ensure_ascii=False)[:500])
+
+                elif (now - self._last_event_time) > idle_timeout:
+                    logger.warning("[ACPNative] idle timeout after %ds", idle_timeout)
+                    yield ACPEvent(type="error", data=f"Idle timeout after {idle_timeout}s")
+                    await self._send_notification("session/cancel", {"sessionId": session_id})
+                    break
 
         except TimeoutError:
             logger.warning("[ACPNative] prompt timed out after %ds", self.timeout)
@@ -279,17 +298,57 @@ class ACPNativeClient:
 
         yield ACPEvent(type="done")
 
+    # ── Tool Execution ───────────────────────────────────────
+
+    async def _execute_tool(self, session_id: str, tool_call: dict) -> dict:
+        """Execute a tool call and return the result."""
+        tool_name = tool_call.get("name", "")
+        tool_args = tool_call.get("args", {})
+
+        if tool_name in ("read", "read_file"):
+            return await self._tool_read(tool_args)
+        elif tool_name in ("write", "write_file"):
+            return await self._tool_write(tool_args)
+        elif tool_name in ("edit", "edit_file"):
+            return await self._tool_edit(tool_args)
+        elif tool_name in ("bash", "execute_code"):
+            return await self._tool_bash(tool_args)
+        elif tool_name in ("glob", "search_files"):
+            return await self._tool_glob(tool_args)
+        elif tool_name in ("grep", "search_text"):
+            return await self._tool_grep(tool_args)
+        else:
+            return {"error": f"Unknown tool: {tool_name}"}
+
+    async def _tool_read(self, args: dict) -> dict:
+        return {"result": f"[read] {args.get('path', '?')}"}
+
+    async def _tool_write(self, args: dict) -> dict:
+        return {"result": f"[write] {args.get('path', '?')} ({len(args.get('content', ''))} chars)"}
+
+    async def _tool_edit(self, args: dict) -> dict:
+        return {"result": f"[edit] {args.get('path', '?')}"}
+
+    async def _tool_bash(self, args: dict) -> dict:
+        return {"result": f"[bash] {args.get('command', '')[:200]}"}
+
+    async def _tool_glob(self, args: dict) -> dict:
+        return {"result": f"[glob] pattern={args.get('pattern', '?')}"}
+
+    async def _tool_grep(self, args: dict) -> dict:
+        return {"result": f"[grep] pattern={args.get('pattern', '?')}"}
+
+    # ── Notification Parsing ─────────────────────────────────
+
     def _parse_notification(self, msg: dict) -> list[ACPEvent]:
         """Parse a session/update notification into ACPEvents."""
         events: list[ACPEvent] = []
         params = msg.get("params", {})
         if not isinstance(params, dict):
-            logger.debug("[ACPNative] notification params not a dict: %s", json.dumps(msg, ensure_ascii=False)[:300])
             return events
         session_id = params.get("sessionId", "")
         update = params.get("update", {})
         if not isinstance(update, dict):
-            logger.debug("[ACPNative] notification update not a dict: %s", json.dumps(msg, ensure_ascii=False)[:300])
             return events
         update_type = update.get("sessionUpdate", "")
 
@@ -307,22 +366,26 @@ class ACPNativeClient:
 
         elif update_type == "tool_call":
             status = update.get("status", "pending")
+            tool_name = update.get("toolName", "")
             if status == "pending":
                 events.append(ACPEvent(type="tool_call", data={
-                    "name": update.get("toolName", ""),
+                    "name": tool_name,
                     "args": update.get("input", {}),
                     "status": "pending",
                 }, session_id=session_id))
             elif status == "in_progress":
-                pass
+                events.append(ACPEvent(type="tool_call", data={
+                    "name": tool_name,
+                    "status": "running",
+                }, session_id=session_id))
             elif status == "completed":
                 events.append(ACPEvent(type="tool_call", data={
-                    "name": update.get("toolName", ""),
+                    "name": tool_name,
                     "result": str(update.get("output", "")),
                     "status": "completed",
                 }, session_id=session_id))
             elif status == "error":
-                events.append(ACPEvent(type="error", data=f"Tool '{update.get('toolName', '')}' failed: {update.get('error', '')}", session_id=session_id))
+                events.append(ACPEvent(type="error", data=f"Tool '{tool_name}' failed: {update.get('error', '')}", session_id=session_id))
 
         elif update_type == "usage_update":
             used = update.get("used", 0)
@@ -338,10 +401,32 @@ class ACPNativeClient:
         elif update_type == "plan":
             events.append(ACPEvent(type="plan", data=str(update.get("plan", "")), session_id=session_id))
 
+        elif update_type == "permission_request":
+            events.append(ACPEvent(type="permission_request", data={
+                "req_id": update.get("reqId", ""),
+                "toolCall": {
+                    "name": update.get("toolName", ""),
+                    "args": update.get("input", {}),
+                },
+                "options": update.get("options", []),
+            }, session_id=session_id))
+
         elif update_type in ("available_commands_update", "current_mode_update", "session_info_update"):
             pass
 
         return events
+
+    # ── Permission ───────────────────────────────────────────
+
+    async def resolve_permission(self, req_id: str, option_id: str) -> None:
+        """Resolve a permission request by sending the chosen option."""
+        fut = self._pending_permissions.get(req_id)
+        if fut:
+            fut.set_result(option_id)
+        await self._send_notification("permission/response", {
+            "reqId": req_id,
+            "optionId": option_id,
+        })
 
     async def cancel(self, session_id: str):
         """Cancel an active prompt (notification, no response)."""

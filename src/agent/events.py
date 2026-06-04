@@ -37,6 +37,7 @@ task_update        ``data: dict`` (``{agent, task, status, ...}``,status 是
 metrics            ``data: dict`` (``{elapsed_ms, agent_calls, tokens}``,
                    ``tokens`` 是 ``{agent_name: {input, output, ms}}``)
 summary            ``data: str`` (多 agent 协同后的 LLM 综合摘要)
+audit_summary      ``data: str`` (审计摘要,包含各 Agent 审计结果)
 error              ``data: str`` (错误消息,通常是异常文本)
 done               (无其它字段,流结束的标志)
 ================  ==========================================================
@@ -70,6 +71,9 @@ class EventType:
     # ── 任务状态事件 (1 个) ──────────────────────────────────────
     TASK_UPDATE: Final[str] = "task_update"  # 任务状态变更
 
+    # ── 审计 (1 个) ──────────────────────────────────────────────
+    AUDIT_SUMMARY: Final[str] = "audit_summary"  # 审计摘要
+
     # ── 摘要 / 度量 / 错误 (3 个) ────────────────────────────────
     SUMMARY: Final[str] = "summary"  # 监督者综合
     METRICS: Final[str] = "metrics"  # 性能 / 计量数据
@@ -84,6 +88,7 @@ class EventType:
         return {
             cls.THINKING_START, cls.THINKING, cls.THINKING_DONE,
             cls.PLAN, cls.MESSAGE, cls.TOOL_CALL, cls.TASK_UPDATE,
+            cls.AUDIT_SUMMARY,
             cls.SUMMARY, cls.METRICS, cls.ERROR, cls.DONE,
         }
 
@@ -194,6 +199,11 @@ def make_task_update(
     payload: dict[str, Any] = {"agent": task_agent, "task": task, "status": status}
     payload.update(extra)
     return make_event(EventType.TASK_UPDATE, agent_name=agent_name, data=payload)
+
+
+def make_audit_summary(agent_name: str, data: str) -> dict[str, Any]:
+    """构造 ``audit_summary`` 事件,``data`` 是审计报告文本。"""
+    return make_event(EventType.AUDIT_SUMMARY, agent_name=agent_name, data=data)
 
 
 def make_summary(agent_name: str, summary_text: str) -> dict[str, Any]:

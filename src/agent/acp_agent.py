@@ -54,14 +54,21 @@ class ACPAgent:
                 logger.warning("[ACP] initial connect failed, will use fallback: %s", e)
         return self._client
 
+    async def resolve_permission(self, req_id: str, option_id: str) -> None:
+        """Resolve a pending permission request by choosing an option."""
+        client = await self._ensure_client()
+        await client._native.resolve_permission(req_id, option_id)
+
     async def run(self, task: str, context: str = "", session_id: str = "") -> AsyncIterator[dict[str, Any]]:
         """Run a task via external agent, yielding SSE-compatible events.
-        
+
         If session_id (chat session ID) is provided, tries to restore the
         corresponding ACP session from checkpoint for context continuity.
         """
         start_time = time.time()
         _event_count = 0
+
+        yield {"type": "thinking_start", "agent_name": self.agent_id}
 
         client = await self._ensure_client()
 
@@ -120,6 +127,10 @@ class ACPAgent:
                         "agent_name": self.agent_id,
                         "acp_session_id": session_acp_id or None,
                     }
+                elif acp_event.type == "permission_request":
+                    data = acp_event.data if isinstance(acp_event.data, dict) else {}
+                    data["agent_id"] = self.agent_id
+                    yield {"type": "permission_request", "data": data, "agent_name": self.agent_id}
                 elif acp_event.type == "error":
                     yield {"type": "error", "data": str(acp_event.data), "agent_name": self.agent_id}
                 elif acp_event.type == "done":

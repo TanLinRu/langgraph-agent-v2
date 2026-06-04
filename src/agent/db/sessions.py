@@ -71,7 +71,8 @@ def list_sessions(
     query = (
         "SELECT session_id, user_id, title, created_at, updated_at, summary, "
         "compacted_at, status, COALESCE(duration_ms, 0), "
-        "COALESCE(acp_session_id, ''), COALESCE(project_path, '') "
+        "COALESCE(acp_session_id, ''), COALESCE(project_path, ''), "
+        "COALESCE(audit_summary, '') "
         "FROM sessions"
     )
     params: list = []
@@ -102,6 +103,7 @@ def list_sessions(
             "duration_ms": r[8] or 0,
             "acp_session_id": r[9] or "",
             "project_path": r[10] or "",
+            "audit_summary": r[11] or "",
         }
         for r in rows
     ]
@@ -123,6 +125,27 @@ def get_session_summary(session_id: str) -> str:
     conn = _get_conn()
     row = conn.execute(
         "SELECT summary FROM sessions WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else ""
+
+
+def save_audit_summary(session_id: str, text: str) -> None:
+    """持久化审计摘要。"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE sessions SET audit_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+        (text, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_audit_summary(session_id: str) -> str:
+    """获取持久化的审计摘要。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT audit_summary FROM sessions WHERE session_id = ?", (session_id,)
     ).fetchone()
     conn.close()
     return row[0] if row and row[0] else ""

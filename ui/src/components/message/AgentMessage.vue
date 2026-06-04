@@ -228,7 +228,7 @@ function statusLabel(s?: string): string {
 .file-ref:hover { background: var(--accent-bg-hover); border-color: var(--accent-focus); }
 .file-ref-icon { font-size: 12px; }
 
-.tool-calls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.tool-calls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; width: 100%; align-items: flex-start; }
 
 /* Markdown styles */
 .md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(h4) { margin: 16px 0 8px; font-weight: 600; color: var(--text-primary); }

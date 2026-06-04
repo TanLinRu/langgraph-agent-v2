@@ -19,7 +19,7 @@
       "model": null,
       "temperature": 0.3,
       "max_tokens": 8192,
-      "tools": ["execute_code", "read_file", "write_file", "search_files"],
+      "tools": ["execute_code", "read_file", "write_file", "search_files", "load_skill"],
       "system_prompt": "You are a coding expert. Write and execute code to solve problems. Think step by step. Always read relevant files before making changes."
     },
     "researcher": {

@@ -57,14 +57,12 @@ const toolIcon = computed(() => {
 
 <style scoped>
 .tool-call-block {
-  margin: 3px 0 3px 38px;
-  max-width: 700px;
-  align-self: flex-start;
+  width: 100%; margin-left: 0;
 }
 .tool-header {
   display: inline-flex; align-items: center; gap: 8px;
-  background: rgba(167, 139, 250, 0.07);
-  border: 1px solid rgba(167, 139, 250, 0.18);
+  background: var(--bg-glass);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 10px;
   font-size: 12px;
@@ -75,15 +73,15 @@ const toolIcon = computed(() => {
   font-family: inherit;
   min-width: 0;
 }
-.tool-header:hover { background: rgba(167, 139, 250, 0.12); }
-.tool-header.open { background: rgba(167, 139, 250, 0.14); }
+.tool-header:hover { background: var(--bg-hover); }
+.tool-header.open { background: var(--bg-hover); }
 
 .icon { font-size: 13px; flex-shrink: 0; }
 .name {
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 12px;
   font-weight: 600;
-  color: #c084fc;
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 .status { flex-shrink: 0; }
@@ -105,10 +103,9 @@ const toolIcon = computed(() => {
 .tool-body {
   margin-top: 4px;
   padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--bg-hover);
   border-radius: 0 0 6px 6px;
-  border-top: 1px solid rgba(167, 139, 250, 0.1);
-  max-width: 700px;
+  border-top: 1px solid var(--border-light);
   animation: slideIn 0.2s ease-out;
 }
 @keyframes slideIn { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 400px; } }

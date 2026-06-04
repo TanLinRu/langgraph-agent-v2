@@ -1,34 +1,12 @@
-/**
- * 流管理组合式函数 (Stream Manager)
- *
- * 封装 SSE 流式通信的 3 条路径:
- * 1. `sendMessage` — EventSource 回调 (chat/stream 端点)
- * 2. `sendOrchestrate` — async generator (orchestrate 端点)
- * 3. `sendACP` — fetch + reader (acp/send 端点)
- *
- * 职责
- * ----
- * - SSE 事件循环 + JSON 解析
- * - 背压队列 (MICRO/STEP/MACRO 三级) + typewriter 调度
- * - Abort 控制
- * - 事件分派:把每个 SSE event type 对应到 messageManager 的操作
- *
- * 为什么与 messageManager 分离:
- *   消息管理是纯 UI 状态操作,流管理涉及 HTTP 请求 + 取消 + 重连,
- *   两个关注点耦合在一起不利于测试和替换传输层。
- */
-
 import { ref } from 'vue'
-import type { ChatMessage, LogEntry, LogEntryType, MetricsData, TaskPhaseUpdate, TaskUpdate } from './api'
+import type { ChatMessage, LogEntry, LogEntryType, MetricsData, PermissionRequest, TaskPhaseUpdate, TaskUpdate } from './api'
 import { streamChatCallbacks, streamOrchestrate, compactSession, restoreSession as apiRestoreSession } from './api'
 import { useSessionsStore } from '../stores/sessions'
 
 export function useStreamManager(
-  // 接收 messageManager 的方法引用,避免循环依赖
   msg: ReturnType<typeof import('./messageManager').useMessageManager>,
   sessionId: ReturnType<typeof ref<string | null>>,
 ) {
-  // ── 状态 ──────────────────────────────────────────────────
   const isLoading = ref(false)
   const streamingActive = ref(false)
   const thinkingChunks = ref<Array<{ agentName: string; text: string }>>([])
@@ -36,25 +14,20 @@ export function useStreamManager(
   const currentPhase = ref<TaskPhaseUpdate | null>(null)
   const currentDispatch = ref<{ from: string; to: string; fromLabel?: string; toLabel?: string } | null>(null)
   const pendingMessages = ref<string[]>([])
+  const permissionRequest = ref<PermissionRequest | null>(null)
 
-  // Abort 控制
   let _abortController: AbortController | null = null
   let _currentAbort: { abort: () => void } | null = null
-  let _lastAgent: string | null = null
 
-  // Typewriter RAF
   let _typeRaf: number | null = null
   let _thinkingTimeout: ReturnType<typeof setTimeout> | null = null
   let _thinkChunkCount = 0
 
-  // 背压队列
   let _eventQueue: Array<() => void> = []
   let _eventTimer: ReturnType<typeof setTimeout> | null = null
 
   const STEP_DELAY_MS = 80
   const SSE_DELAY_MS = 120
-
-  // ── Helpers ───────────────────────────────────────────────
 
   function _setSessionStatus(status: 'processing' | 'completed') {
     const sid = sessionId.value
@@ -64,17 +37,17 @@ export function useStreamManager(
     if (idx >= 0) {
       s.sessions[idx] = { ...s.sessions[idx], status }
     }
+    if (status === 'completed') {
+      s.fetchSessions()
+    }
   }
 
   function _appendLog(type: LogEntryType, content: string, agent?: string) {
     eventLog.value.push({ type, content, timestamp: Date.now(), agent })
   }
 
-  // ── Typewriter ────────────────────────────────────────────
-
   function _typewriterTick() {
     let hasMore = false
-
     for (const [key, state] of Object.entries(msg.typewriterState.value)) {
       if (state.done) continue
       const idx = Number(key)
@@ -87,14 +60,13 @@ export function useStreamManager(
         state.done = true
       }
     }
-
     for (const [key, state] of Object.entries(msg.thinkTypeState.value)) {
       if (state.done) continue
       const idx = Number(key)
       if (state.display.length < state.full.length) {
         const next = Math.min(state.display.length + 2, state.full.length)
         state.display = state.full.slice(0, next)
-        msg.setContent(idx, state.display)  // TODO: should use appendThinking for thinking typewriter
+        msg.setContent(idx, state.display)
         hasMore = true
       } else {
         state.done = true
@@ -106,7 +78,6 @@ export function useStreamManager(
         }
       }
     }
-
     if (hasMore) {
       _typeRaf = requestAnimationFrame(_typewriterTick)
     } else {
@@ -125,8 +96,6 @@ export function useStreamManager(
       _typeRaf = null
     }
   }
-
-  // ── 背压队列 ─────────────────────────────────────────────
 
   function _enqueueEvent(fn: () => void) {
     _eventQueue.push(fn)
@@ -154,20 +123,15 @@ export function useStreamManager(
   function _enqueueImmediate(fn: () => void) { fn() }
 
   function _flushEventQueue() {
-    for (const fn of _eventQueue) fn()
+    const batch = _eventQueue.splice(0)
     _eventQueue = []
     if (_eventTimer) { clearTimeout(_eventTimer); _eventTimer = null }
+    for (const fn of batch) fn()
   }
 
-  // ── 3 条发送路径 ─────────────────────────────────────────
-
-  /**
-   * 1. sendMessage — 通过 EventSource 回调发送
-   */
   function sendMessage(content: string) {
     if (_abortController) _abortController.abort()
     _abortController = new AbortController()
-
     _setSessionStatus('processing')
     msg.addUser(content)
     msg.resetTaskItems()
@@ -175,7 +139,6 @@ export function useStreamManager(
     streamingActive.value = false
 
     let msgIdx = -1
-
     function ensureMsgIdx(agentName?: string) {
       if (msgIdx < 0) {
         msgIdx = msg.addAssistant(agentName || 'assistant')
@@ -194,7 +157,6 @@ export function useStreamManager(
           useSessionsStore().activeSessionId = event.session_id as string
         }
         const agentName = event.agent_name as string | undefined
-
         if (event.type === 'thinking_start') {
           _thinkChunkCount = 0
           ensureMsgIdx(agentName)
@@ -212,14 +174,9 @@ export function useStreamManager(
         } else if (event.type === 'thinking_done') {
           if (msgIdx >= 0 && msg.thinkTypeState.value[msgIdx]) {
             const ts = msg.thinkTypeState.value[msgIdx]
-            if (ts.done) {
-              msg.setThinkingDone(msgIdx)
-            } else {
-              ts.pendingDone = true
-            }
-          } else if (msgIdx >= 0) {
-            msg.setThinkingDone(msgIdx)
-          }
+            if (ts.done) msg.setThinkingDone(msgIdx)
+            else ts.pendingDone = true
+          } else if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
         } else if (event.type === 'tool_call') {
           _enqueueStep(() => {
             ensureMsgIdx(agentName)
@@ -234,28 +191,23 @@ export function useStreamManager(
                 msg.initTypewriter(msgIdx, fullContent)
                 _startTypewriter()
               }
-              if (event.file_refs) {
-                msg.messages.value[msgIdx]!.fileRefs = event.file_refs as string[]
-              }
+              if (event.file_refs) msg.messages.value[msgIdx]!.fileRefs = event.file_refs as string[]
             }
           })
         } else if (event.type === 'summary') {
           _enqueueStep(() => {
             msg.pushSummary('supervisor', event.data as string)
-            msgIdx = -1
           })
         } else if (event.type === 'error') {
           _enqueueImmediate(() => msg.addError(String(event.data)))
         }
       },
       () => {
+        _flushEventQueue()
         msg.reconcileStreamEnd()
         _setSessionStatus('completed')
-        if (_eventQueue.length > 10) _flushEventQueue()
         _thinkingTimeout = setTimeout(() => {
-          for (const m of msg.messages.value) {
-            if (m.isThinking) m.isThinking = false
-          }
+          for (const m of msg.messages.value) if (m.isThinking) m.isThinking = false
           _thinkingTimeout = null
         }, 3000)
         isLoading.value = false
@@ -265,9 +217,6 @@ export function useStreamManager(
     )
   }
 
-  /**
-   * 2. sendOrchestrate — 通过 async generator 发送多 agent 编排
-   */
   async function sendOrchestrate(task: string) {
     _setSessionStatus('processing')
     msg.addUser(task)
@@ -277,25 +226,6 @@ export function useStreamManager(
     currentDispatch.value = null
     isLoading.value = true
     _appendLog('start', '开始调度任务', 'supervisor')
-
-    let supervisorMsgIdx = -1
-    const agentMsgIndices: Record<string, number> = {}
-
-    function ensureSupervisorMsg() {
-      if (supervisorMsgIdx < 0) {
-        supervisorMsgIdx = msg.addAssistant('supervisor')
-        streamingActive.value = true
-      }
-    }
-
-    function ensureAgentMsg(agentName: string): number {
-      if (!(agentName in agentMsgIndices)) {
-        const idx = msg.addAssistant(agentName)
-        agentMsgIndices[agentName] = idx
-        streamingActive.value = true
-      }
-      return agentMsgIndices[agentName]
-    }
 
     try {
       for await (const event of streamOrchestrate(task, sessionId.value || undefined)) {
@@ -307,31 +237,28 @@ export function useStreamManager(
 
         if (event.type === 'thinking_start') {
           _thinkChunkCount = 0
-          ensureSupervisorMsg()
-          msg.setThinkingStart(supervisorMsgIdx)
-          msg.initThinkTypewriter(supervisorMsgIdx)
+          const idx = msg.ensureAssistant('supervisor')
+          msg.setThinkingStart(idx)
+          msg.initThinkTypewriter(idx)
+          streamingActive.value = true
           continue
         } else if (event.type === 'thinking') {
           _thinkChunkCount++
-          ensureSupervisorMsg()
-          if (msg.thinkTypeState.value[supervisorMsgIdx]) {
-            msg.thinkTypeState.value[supervisorMsgIdx].full += (event.data as string)
+          const idx = msg.ensureAssistant('supervisor')
+          if (msg.thinkTypeState.value[idx]) {
+            msg.thinkTypeState.value[idx].full += (event.data as string)
             _startTypewriter()
           } else {
-            msg.appendThinking(supervisorMsgIdx, event.data as string)
+            msg.appendThinking(idx, event.data as string)
           }
           continue
         } else if (event.type === 'thinking_done') {
-          if (supervisorMsgIdx >= 0 && msg.thinkTypeState.value[supervisorMsgIdx]) {
-            const ts = msg.thinkTypeState.value[supervisorMsgIdx]
-            if (ts.done) {
-              msg.setThinkingDone(supervisorMsgIdx)
-            } else {
-              ts.pendingDone = true
-            }
-          } else if (supervisorMsgIdx >= 0) {
-            msg.setThinkingDone(supervisorMsgIdx)
-          }
+          const idx = msg.ensureAssistant('supervisor')
+          if (idx >= 0 && msg.thinkTypeState.value[idx]) {
+            const ts = msg.thinkTypeState.value[idx]
+            if (ts.done) msg.setThinkingDone(idx)
+            else ts.pendingDone = true
+          } else if (idx >= 0) msg.setThinkingDone(idx)
           continue
         }
 
@@ -340,46 +267,48 @@ export function useStreamManager(
           _appendLog('decision', (event.data as string).slice(0, 80), 'supervisor')
           const planText = event.data as string
           const stepLines = planText.split('\n').filter(l => /^\s*[-*]\s*\w+:/.test(l))
-          const stepCount = stepLines.length
           for (const line of stepLines) {
             const match = line.match(/^\s*[-*]\s*(\w+)\s*:\s*(.+)/)
             if (match) {
-              const agent = match[1]
-              const task = match[2].trim()
-              const dup = msg.taskItems.value.find(t => t.agent === agent && t.task === task)
-              if (!dup) {
-                msg.taskItems.value.push({ agent, task, status: 'pending' } as TaskUpdate)
+              const agent = match[1]; const subtask = match[2].trim()
+              if (!msg.taskItems.value.find(t => t.agent === agent && t.task === subtask)) {
+                msg.taskItems.value.push({ agent, task: subtask, status: 'pending' } as TaskUpdate)
               }
             }
           }
-          const oldStep: number = currentPhase.value?.step ?? 0
-          const oldTotal: number = currentPhase.value?.totalSteps ?? 0
+          const p = currentPhase.value as TaskPhaseUpdate | null
           currentPhase.value = {
-            step: oldStep + 1,
-            totalSteps: Math.max(oldTotal, stepCount || 1),
+            step: (p?.step ?? 0) + 1,
+            totalSteps: Math.max(p?.totalSteps ?? 0, stepLines.length || 1),
             description: stepLines[0]?.replace(/^\s*[-*]\s*\w+:\s*/, '').slice(0, 60) || '',
           }
-          msg.pushPlan(planText)
+          const idx = msg.ensureAssistant('supervisor')
+          msg.messages.value[idx]!.content = planText
+          if (msg.messages.value[idx]!.isThinking) msg.messages.value[idx]!.isThinking = false
+          _stopTypewriter()
         } else if (event.type === 'tool_call') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
-          const idx = ensureAgentMsg(agentName)
-          if (!(agentName in agentMsgIndices)) {
-            msg.setHandoff(idx, 'supervisor', agentName)
-          }
-          const tcs = event.data as Array<{ name: string; args: Record<string, unknown> }>
+          const idx = msg.ensureAssistant(agentName)
+          msg.setHandoff(idx, 'supervisor', agentName)
+          const tcs = event.data as Array<{ name: string; args: Record<string, unknown>; status?: string }>
           _appendLog('tool_call', tcs[0]?.name || 'unknown', agentName)
           msg.setAgentStatus(idx, 'working')
-          msg.messages.value[idx]!.toolCalls = tcs
+          const resultTcs = tcs.filter(tc => tc.status === 'completed' || tc.status === 'result')
+          if (resultTcs.length > 0) {
+            msg.messages.value[idx]!.toolCalls = resultTcs as any
+            msg.clearCompletedToolCalls()
+          } else {
+            msg.messages.value[idx]!.toolCalls = tcs as any
+          }
         } else if (event.type === 'summary') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
           _appendLog('summary', (event.data as string).slice(0, 80), 'supervisor')
-          ensureSupervisorMsg()
-          msg.setAgentStatus(supervisorMsgIdx, 'aggregating')
-          msg.messages.value[supervisorMsgIdx]!.summary = event.data as string
-          msg.messages.value[supervisorMsgIdx]!.isSummary = true
+          msg.pushSummary('supervisor', event.data as string)
         } else if (event.type === 'message') {
-          const idx = ensureAgentMsg(agentName)
-          msg.setContent(idx, event.data as string)
+          _enqueueImmediate(() => {
+            const idx = msg.ensureAssistant(agentName)
+            msg.appendContent(idx, event.data as string)
+          })
         } else if (event.type === 'task_update') {
           const update = event.data as TaskUpdate
           const now = Date.now()
@@ -393,8 +322,7 @@ export function useStreamManager(
               currentDispatch.value = { from: 'supervisor', to: update.agent }
             }
             if ((update.status === 'completed' || update.status === 'failed') && prev.startedAt) {
-              merged.endedAt = now
-              merged.elapsedMs = now - prev.startedAt
+              merged.endedAt = now; merged.elapsedMs = now - prev.startedAt
               _appendLog('handoff', `${update.agent} 完成`, update.agent)
               currentDispatch.value = { from: update.agent, to: 'supervisor' }
             }
@@ -408,14 +336,18 @@ export function useStreamManager(
             }
             msg.taskItems.value.push(fresh)
           }
-          const agentIdx = agentMsgIndices[update.agent]
-          if (agentIdx !== undefined) {
-            if (update.status === 'running') msg.setAgentStatus(agentIdx, 'working')
-            else if (update.status === 'completed') msg.setAgentStatus(agentIdx, 'done')
-            else if (update.status === 'failed') msg.setAgentStatus(agentIdx, 'failed')
-          }
+          const agentIdx = msg.ensureAssistant(update.agent)
+          if (update.status === 'running') msg.setAgentStatus(agentIdx, 'working')
+          else if (update.status === 'completed') msg.setAgentStatus(agentIdx, 'done')
+          else if (update.status === 'failed') msg.setAgentStatus(agentIdx, 'failed')
+        } else if (event.type === 'audit_summary') {
+          msg.setAuditSummary(event.data as string)
+        } else if (event.type === 'permission_request') {
+          permissionRequest.value = event.data as PermissionRequest
         } else if (event.type === 'metrics') {
           msg.setMetrics(event.data as MetricsData)
+        } else if (event.type === 'done') {
+          // stream complete — let for-await exit naturally
         } else if (event.type === 'error') {
           _appendLog('error', String(event.data), agentName)
           msg.addError(String(event.data))
@@ -424,14 +356,21 @@ export function useStreamManager(
     } catch (e: any) {
       msg.addError(`Connection error: ${e.message}`)
     } finally {
+      _flushEventQueue()
       msg.reconcileStreamEnd()
       _setSessionStatus('completed')
-      for (const [name, idx] of Object.entries(agentMsgIndices)) {
-        if (msg.messages.value[idx]) msg.setAgentStatus(idx, 'done')
-      }
-      if (supervisorMsgIdx >= 0 && msg.messages.value[supervisorMsgIdx]) {
-        msg.setAgentStatus(supervisorMsgIdx, 'done')
-        msg.setThinkingDone(supervisorMsgIdx)
+      const failedAgents = new Set(
+        msg.taskItems.value.filter(t => t.status === 'failed').map(t => t.agent)
+      )
+      for (let i = 0; i < msg.messages.value.length; i++) {
+        const m = msg.messages.value[i]
+        if (m?.role === 'assistant') {
+          if (m.agentName && failedAgents.has(m.agentName)) {
+            msg.setAgentStatus(i, 'failed')
+          } else {
+            msg.setAgentStatus(i, 'done')
+          }
+        }
       }
       isLoading.value = false
       streamingActive.value = false
@@ -439,15 +378,10 @@ export function useStreamManager(
     }
   }
 
-  /**
-   * 3. sendACP — 直接发送给 ACP agent
-   */
   async function sendACP(agentId: string, content: string) {
-    _lastAgent = agentId
     _setSessionStatus('processing')
     if (_abortController) _abortController.abort()
     _abortController = new AbortController()
-
     isLoading.value = true
     streamingActive.value = false
 
@@ -457,6 +391,7 @@ export function useStreamManager(
     }
     msg.taskItems.value = [taskItem]
     let msgIdx = -1
+    _appendLog('start', `ACP agent ${agentId} 开始`, agentId)
 
     try {
       const res = await fetch(`${import.meta.env.VITE_API_BASE || ''}/api/acp/send`, {
@@ -465,7 +400,6 @@ export function useStreamManager(
         body: JSON.stringify({ agent_id: agentId, message: content, session_id: sessionId.value }),
         signal: _abortController!.signal,
       })
-
       if (!res.ok || !res.body) {
         msg.addSystem(`⚠ ACP agent ${agentId} 未响应 (${res.status})`)
         taskItem.status = 'failed'
@@ -474,69 +408,61 @@ export function useStreamManager(
         isLoading.value = false
         return
       }
-
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
-
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
           try {
             const event = JSON.parse(line.slice(6))
+            _appendLog(event.type as LogEntryType, String(event.data || '').slice(0, 80), agentId)
             if (event.session_id && event.session_id !== sessionId.value) {
               sessionId.value = event.session_id as string
               useSessionsStore().activeSessionId = event.session_id as string
             }
-            if (event.type === 'thinking') {
-              if (msgIdx < 0) {
-                msgIdx = msg.addAssistant(agentId)
-                streamingActive.value = true
-              }
+            if (event.type === 'thinking_start') {
+              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true; msg.setThinkingStart(msgIdx) }
+            } else if (event.type === 'thinking') {
+              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true; msg.setThinkingStart(msgIdx) }
               msg.appendThinking(msgIdx, event.data as string)
-              msg.setThinkingStart(msgIdx)
             } else if (event.type === 'tool_call') {
-              if (msgIdx < 0) {
-                msgIdx = msg.addAssistant(agentId)
-                streamingActive.value = true
-              }
+              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
               const tc = Array.isArray(event.data) ? event.data : [event.data]
               const valid = tc.filter((t: any) => t?.name)
               if (valid.length > 0) msg.messages.value[msgIdx]!.toolCalls = valid
             } else if (event.type === 'message') {
-              if (msgIdx < 0) {
-                msgIdx = msg.addAssistant(agentId)
-                streamingActive.value = true
-              }
+              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
               msg.appendContent(msgIdx, event.data as string)
               msg.setThinkingDone(msgIdx)
             } else if (event.type === 'thinking_done') {
               if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
             } else if (event.type === 'metrics') {
               msg.setMetrics(event.data as MetricsData)
+            } else if (event.type === 'permission_request') {
+              const data = event.data as PermissionRequest
+              if (data) permissionRequest.value = data
             } else if (event.type === 'error') {
               msg.addSystem(`⚠ ${event.data}`)
             }
-          } catch { /* 跳过无法解析的行 */ }
+          } catch { /* skip */ }
         }
       }
       taskItem.status = 'completed'
       taskItem.endedAt = Date.now()
       taskItem.elapsedMs = taskItem.endedAt - (taskItem.startedAt || taskItem.endedAt)
     } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        msg.addSystem(`⚠ ACP 连接错误: ${e.message}`)
-      }
+      if (e.name !== 'AbortError') msg.addSystem(`⚠ ACP 连接错误: ${e.message}`)
       taskItem.status = 'failed'
       taskItem.endedAt = Date.now()
       taskItem.elapsedMs = taskItem.endedAt - (taskItem.startedAt || taskItem.endedAt)
     } finally {
+      _flushEventQueue()
       msg.reconcileStreamEnd()
       _setSessionStatus('completed')
       if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
@@ -545,28 +471,23 @@ export function useStreamManager(
         (m.content.startsWith(`@${agentId} 执行中`) || m.content.startsWith(`@${agentId} 继续执行`))
       )
       if (statusIdx >= 0) msg.messages.value.splice(statusIdx, 1)
+      permissionRequest.value = null
       isLoading.value = false
       streamingActive.value = false
       _processPendingMessages()
     }
   }
 
-  // ── Abort ────────────────────────────────────────────────
-
   function abort() {
-    if (_currentAbort) {
-      _currentAbort.abort()
-      _currentAbort = null
-    } else if (_abortController) {
-      _abortController.abort()
-      _abortController = null
-    }
+    if (_currentAbort) { _currentAbort.abort(); _currentAbort = null }
+    else if (_abortController) { _abortController.abort(); _abortController = null }
     isLoading.value = false
     streamingActive.value = false
     pendingMessages.value = []
     eventLog.value = []
     currentPhase.value = null
     currentDispatch.value = null
+    permissionRequest.value = null
     _eventQueue = []
     if (_eventTimer) { clearTimeout(_eventTimer); _eventTimer = null }
     _stopTypewriter()
@@ -580,8 +501,6 @@ export function useStreamManager(
     await send(content)
   }
 
-  // ── Compact ─────────────────────────────────────────────
-
   async function handleCompact(): Promise<string> {
     const sid = sessionId.value ?? useSessionsStore().activeSessionId
     if (!sid) return 'No active session to compact.'
@@ -593,12 +512,8 @@ export function useStreamManager(
       return `Session compacted: removed ${result.deleted_messages} old messages, kept ${result.kept_messages} recent.`
     } catch (e: any) {
       return `Compact failed: ${e.message}`
-    } finally {
-      isLoading.value = false
-    }
+    } finally { isLoading.value = false }
   }
-
-  // ── 发送入口 (含 command / @mention / ACP 路由) ─────────
 
   async function send(content: string) {
     if (isLoading.value) {
@@ -606,16 +521,14 @@ export function useStreamManager(
       msg.addSystem(`已排队: ${content}`)
       return
     }
-
     if (content.startsWith('/')) {
       const cmd = content.trim().toLowerCase()
       if (cmd === '/compact') { msg.addSystem(await handleCompact()); return }
-      if (cmd === '/clear') { msg.clear(); sessionId.value = null; _lastAgent = null; return }
-      if (cmd === '/new') { msg.clear(); sessionId.value = null; _lastAgent = null; return }
+      if (cmd === '/clear') { msg.clear(); sessionId.value = null; return }
+      if (cmd === '/new') { msg.clear(); sessionId.value = null; return }
       msg.addSystem(`Unknown command: ${cmd}. Available: /compact, /clear, /new`)
       return
     }
-
     const mentionMatch = content.match(/(?:^|\s)@(\w[\w-]*)(?:\s|$)/)
     if (mentionMatch) {
       const agentName = mentionMatch[1].toLowerCase()
@@ -632,17 +545,6 @@ export function useStreamManager(
         return
       }
     }
-
-    if (_lastAgent) {
-      const available = await checkAcpAvailable(_lastAgent)
-      if (available) {
-        msg.addUser(content)
-        msg.addSystem(`@${_lastAgent} 继续执行...`)
-        await sendACP(_lastAgent, content)
-        return
-      }
-    }
-
     await sendOrchestrate(content)
   }
 
@@ -652,9 +554,7 @@ export function useStreamManager(
       if (!res.ok) return false
       const data = await res.json()
       return data.available === true
-    } catch {
-      return false
-    }
+    } catch { return false }
   }
 
   function _processPendingMessages() {
@@ -670,7 +570,7 @@ export function useStreamManager(
 
   return {
     isLoading, streamingActive, thinkingChunks, eventLog,
-    currentPhase, currentDispatch, pendingMessages,
+    currentPhase, currentDispatch, pendingMessages, permissionRequest,
     sendMessage, sendOrchestrate, sendACP, send, handleCompact,
     abort, abortAndSend, checkAcpAvailable,
   }

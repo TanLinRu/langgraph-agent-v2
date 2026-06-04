@@ -1,24 +1,32 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
+import { useSessionsStore } from '../stores/sessions'
 import ConvAvatar from './ConvAvatar.vue'
 import PhaseHeader from './PhaseHeader.vue'
 import DispatchIndicator from './DispatchIndicator.vue'
 import AgentTaskPanel from './AgentTaskPanel.vue'
 import EventLog from './EventLog.vue'
+import { renderMd } from '../utils/useMarkdown'
 
 const chat = useChatStore()
+const sessions = useSessionsStore()
 
 // Session timer
 const sessionElapsedMs = ref(0)
 let sessionTimer: ReturnType<typeof setInterval> | null = null
 const sessionStart = ref(Date.now())
 
-onMounted(() => {
-  sessionTimer = setInterval(() => {
-    sessionElapsedMs.value = Date.now() - sessionStart.value
-  }, 1000)
-})
+watch(() => sessions.activeSessionId, (id) => {
+  if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null }
+  sessionElapsedMs.value = 0
+  sessionStart.value = Date.now()
+  if (id) {
+    sessionTimer = setInterval(() => {
+      sessionElapsedMs.value = Date.now() - sessionStart.value
+    }, 1000)
+  }
+}, { immediate: true })
 onUnmounted(() => {
   if (sessionTimer) clearInterval(sessionTimer)
 })
@@ -53,6 +61,7 @@ const taskItems = computed(() => chat.taskItems)
 const eventLog = computed(() => chat.eventLog)
 const currentPhase = computed(() => chat.currentPhase)
 const currentDispatch = computed(() => chat.currentDispatch)
+const auditSummary = computed(() => chat.auditSummary)
 
 // Flash tracking for agent completion events
 const completedTaskKeys = ref<Set<string>>(new Set())
@@ -124,6 +133,15 @@ onUnmounted(() => {
       <div class="monitor-card monitor-card-log" style="--mc-color: var(--accent)">
         <div class="monitor-section-subtitle">事件日志</div>
         <EventLog :entries="eventLog" />
+      </div>
+    </div>
+
+    <!-- Audit Summary -->
+    <div v-if="auditSummary" class="monitor-section">
+      <div class="monitor-section-title">审计摘要</div>
+      <div class="monitor-card audit-card" style="--mc-color: var(--color-green)">
+        <div class="monitor-section-subtitle">审核意见</div>
+        <div class="audit-body md-body" v-html="renderMd(auditSummary || '')"></div>
       </div>
     </div>
 
@@ -230,4 +248,27 @@ onUnmounted(() => {
 .monitor-bar-fill.thinking { background: linear-gradient(90deg,#818cf8,#6366f1); }
 
 .monitor-empty { font-size: 12px; color: var(--text-faint); padding: 8px 14px; text-align: center; }
+
+.audit-card { padding: 0; }
+.audit-body {
+  font-size: 13px; line-height: 1.7; color: var(--text-secondary);
+  padding: 12px 14px; max-height: 400px; overflow-y: auto;
+}
+.audit-body :deep(h1), .audit-body :deep(h2), .audit-body :deep(h3), .audit-body :deep(h4) {
+  margin: 12px 0 6px; font-weight: 600; color: var(--text-primary);
+}
+.audit-body :deep(h1) { font-size: 1.15em; }
+.audit-body :deep(h2) { font-size: 1.05em; border-bottom: 1px solid var(--border-light); padding-bottom: 4px; }
+.audit-body :deep(h3) { font-size: 1em; }
+.audit-body :deep(p) { margin: 4px 0; }
+.audit-body :deep(ul), .audit-body :deep(ol) { margin: 4px 0; padding-left: 18px; }
+.audit-body :deep(li) { margin: 2px 0; }
+.audit-body :deep(code) { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.9em; background: var(--bg-code); padding: 1px 4px; border-radius: 3px; color: var(--accent-text); }
+.audit-body :deep(pre) { margin: 6px 0; padding: 10px; background: var(--bg-code); border-radius: 6px; overflow-x: auto; font-size: 12px; border: 1px solid var(--border-light); }
+.audit-body :deep(strong) { color: var(--text-primary); }
+.audit-body :deep(table) { margin: 6px 0; border-collapse: collapse; width: 100%; font-size: 12px; }
+.audit-body :deep(th), .audit-body :deep(td) { padding: 4px 8px; border: 1px solid var(--border); text-align: left; }
+.audit-body :deep(th) { background: var(--bg-glass); font-weight: 600; }
+.audit-body :deep(hr) { margin: 8px 0; border: none; border-top: 1px solid var(--border); }
+.audit-body :deep(blockquote) { margin: 4px 0; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--accent-bg); border-radius: 0 4px 4px 0; color: var(--text-secondary); font-size: 12px; }
 </style>

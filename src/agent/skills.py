@@ -26,11 +26,9 @@ def load_skills() -> list[Skill]:
         if not cfg.get("enabled", True):
             continue
 
-        # Load content from markdown file
         md_file = cfg.get("file", f"skills/{name}.md")
         md_path = Path(md_file)
         if not md_path.exists():
-            # Try relative to project root
             md_path = _SKILLS_DIR / f"{name}.md"
 
         content = ""
@@ -40,7 +38,6 @@ def load_skills() -> list[Skill]:
             except OSError:
                 pass
 
-        # Extract description from content if not in config
         description = cfg.get("desc", "")
         if not description and content:
             lines = content.split("\n")
@@ -61,7 +58,6 @@ def load_skills() -> list[Skill]:
             enabled=True,
         ))
 
-    # Also scan for any .md files not in skills.json
     if _SKILLS_DIR.exists():
         existing_names = {s.name for s in skills}
         for path in sorted(_SKILLS_DIR.glob("*.md")):
@@ -70,7 +66,6 @@ def load_skills() -> list[Skill]:
             text = path.read_text(encoding="utf-8").strip()
             if not text:
                 continue
-
             lines = text.split("\n")
             description = ""
             for line in lines:
@@ -81,12 +76,7 @@ def load_skills() -> list[Skill]:
                 if stripped.startswith("# "):
                     description = stripped[2:]
                     break
-
-            skills.append(Skill(
-                name=path.stem,
-                description=description,
-                content=text,
-            ))
+            skills.append(Skill(name=path.stem, description=description, content=text))
 
     return skills
 
@@ -94,14 +84,13 @@ def load_skills() -> list[Skill]:
 def get_skills_prompt(agent_id: str = None) -> str:
     """Generate skills section for system prompt injection.
 
-    Args:
-        agent_id: If provided, only include skills assigned to this agent.
+    Returns a [Available Skills] summary list (not full content).
+    The LLM can use the load_skill tool to load full content on demand.
     """
     skills = load_skills()
     if not skills:
         return ""
 
-    # Filter by agent if specified
     if agent_id:
         skills = [s for s in skills if not s.agents or agent_id in s.agents]
 
@@ -110,7 +99,8 @@ def get_skills_prompt(agent_id: str = None) -> str:
 
     parts = ["[Available Skills]"]
     for skill in skills:
-        parts.append(f"\n## {skill.name}\n{skill.content}")
+        parts.append(f"- {skill.name}: {skill.description}")
+    parts.append("\nUse the `load_skill` tool to load full skill content when needed.")
     return "\n".join(parts)
 
 

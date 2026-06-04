@@ -115,6 +115,7 @@ export async function restoreSession(sessionId: string): Promise<{
   summary: string
   task_updates: TaskUpdate[]
   metrics: MetricsData | null
+  audit_summary: string
 }> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`)
   if (!res.ok) throw new Error(`Session not found: ${sessionId}`)

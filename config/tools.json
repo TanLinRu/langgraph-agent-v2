@@ -34,6 +34,13 @@
       "category": "Core",
       "icon": "🔍",
       "desc": "Search for files matching a glob pattern"
+    },
+    "load_skill": {
+      "module": "src.agent.tools.load_skill",
+      "func": "load_skill",
+      "category": "Core",
+      "icon": "📚",
+      "desc": "Load full skill content by name"
     }
   }
 }

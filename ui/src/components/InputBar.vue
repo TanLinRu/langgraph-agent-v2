@@ -6,6 +6,7 @@ const input = defineModel<string>({ default: '' })
 defineProps<{
   isProcessing: boolean
   pendingCount?: number
+  permissionPending?: boolean
 }>()
 const emit = defineEmits<{
   send: []
@@ -165,7 +166,8 @@ function handleSubmit() {
     <form :class="['input-bar', { queued: isProcessing }]" @submit.prevent="handleSubmit">
       <input
         v-model="input"
-        :placeholder="isProcessing ? (pendingCount ? `已排队 ${pendingCount} 条消息...` : 'Agent 处理中...') : '输入消息... @ 提及 Agent'"
+        :placeholder="permissionPending ? '等待权限确认...' : (isProcessing ? (pendingCount ? `已排队 ${pendingCount} 条消息...` : 'Agent 处理中...') : '输入消息... @ 提及 Agent')"
+        :disabled="permissionPending"
         @input="onInput"
         @keydown="onKeydown"
         @blur="showDropdown = false"

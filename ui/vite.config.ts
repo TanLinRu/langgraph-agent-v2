@@ -1,9 +1,14 @@
+/// <reference types="vitest" />
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [vue()],
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

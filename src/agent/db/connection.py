@@ -89,6 +89,7 @@ def _get_conn() -> sqlite3.Connection:
         ("acp_session_id", "TEXT", "DEFAULT ''"),
         ("project_path", "TEXT", "DEFAULT ''"),
         ("metrics", "TEXT", "DEFAULT NULL"),
+        ("audit_summary", "TEXT", "DEFAULT NULL"),
     ]:
         try:
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {dtype} {default}")

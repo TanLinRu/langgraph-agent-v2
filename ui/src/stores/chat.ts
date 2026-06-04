@@ -29,9 +29,11 @@ export const useChatStore = defineStore('chat', () => {
   const sessionsStore = useSessionsStore()
   watch(() => sessionsStore.activeSessionId, async (id) => {
     if (id && id !== sessionId.value) {
+      stream.abort()
       sessionId.value = id
       await restoreSession()
     } else if (!id) {
+      stream.abort()
       sessionId.value = null
       msg.clear()
     }
@@ -93,6 +95,9 @@ export const useChatStore = defineStore('chat', () => {
       if (data.metrics) {
         msg.setMetrics(data.metrics)
       }
+      if (data.audit_summary) {
+        msg.setAuditSummary(data.audit_summary)
+      }
     } catch (e: any) {
       if (e.message?.includes('404') || e.message?.includes('Not Found')) {
         // session gone on server — reset
@@ -108,12 +113,14 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── 便捷方法:clear / newSession ──────────────────────────
   function clearMessages() {
+    stream.abort()
     msg.clear()
     sessionId.value = null
     stream.pendingMessages.value = []
     stream.eventLog.value = []
     stream.currentPhase.value = null
     stream.currentDispatch.value = null
+    stream.permissionRequest.value = null
   }
 
   function newSession() {
@@ -129,6 +136,7 @@ export const useChatStore = defineStore('chat', () => {
     thinkTypeState: msg.thinkTypeState,
     taskItems: msg.taskItems,
     metrics: msg.metrics,
+    auditSummary: msg.auditSummary,
     // 状态 (来自 stream)
     isLoading: stream.isLoading,
     streamingActive: stream.streamingActive,
@@ -136,6 +144,7 @@ export const useChatStore = defineStore('chat', () => {
     currentPhase: stream.currentPhase,
     currentDispatch: stream.currentDispatch,
     pendingMessages: stream.pendingMessages,
+    permissionRequest: stream.permissionRequest,
     // Session
     sessionId,
     // 方法

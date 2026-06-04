@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import time
+
 from src.agent.db.connection import _get_conn
 
 
@@ -77,6 +79,18 @@ def delete_task_updates(session_id: str) -> None:
     """删除某一会话的全部任务更新记录。"""
     conn = _get_conn()
     conn.execute("DELETE FROM task_updates WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def reconcile_session_tasks(session_id: str) -> None:
+    """将 session 中 running/pending 的任务标记为 failed（用于会话恢复）。"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE task_updates SET status = 'failed', ended_at = ? "
+        "WHERE session_id = ? AND status IN ('running', 'pending')",
+        (time.time(), session_id),
+    )
     conn.commit()
     conn.close()
 

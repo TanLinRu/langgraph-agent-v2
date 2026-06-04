@@ -1,558 +1,505 @@
-# 项目差异文档 — langgraph-agent-v2
+# 项目差异文档 — backup → current
 
-> 完整差异：基于 `diff/langgraph-agent-v2-main` 备份 → 当前项目。
+> 从 `diff/langgraph-agent-v2-main`（备份）到当前项目（修改后）的完整差异。
 > 另一 AI agent 可据此将备份逐步修改至当前状态。
 
-## 文件变更总览
+---
 
-### 后端
+## 变更总览
 
-| 文件                                                   | 变化                                    |
-| ------------------------------------------------------ | --------------------------------------- |
-| `src/agent/supervisor.py`                              | ❌ 删除，重构为 orchestrator 包          |
-| `src/agent/graph.py`                                   | ❌ 删除                                  |
-| `src/agent/event_bus.py`                               | ❌ 删除                                  |
-| `src/agent/state.py`                                   | ❌ 删除（死代码）                         |
-| `src/agent/orchestrator/`（NEW 包）                     | ✨ 替代 supervisor + graph               |
-| `src/agent/orchestrator/__init__.py`                   | ✨ 重新导出 Orchestrator/Planner/Dispatcher |
-| `src/agent/orchestrator/core.py`                       | ✨ Orchestrator 类（plan→dispatch→summarize） |
-| `src/agent/orchestrator/planner.py`                    | ✨ Planner 类（prompt 构造 + plan 解析）  |
-| `src/agent/orchestrator/dispatcher.py`                 | ✨ LocalDispatcher + ACPDispatcher 工厂  |
-| `src/agent/orchestrator/summarizer.py`                 | ✨ 多 agent 结果汇总流                   |
-| `src/agent/orchestrator/_events.py`                    | ✨ 便捷重导出 events.py                  |
-| `src/agent/events.py`                                  | ✨ 统一事件协议：EventType + make_event 工厂 |
-| `src/agent/message.py`                                 | ✨ Message 数据类（dataclass, to_langchain） |
-| `src/agent/_utils.py`                                  | ✨ 共享工具函数（extract_file_refs, SSE_HEADERS） |
-| `src/agent/checkpoint.py`                              | ❌ 删除，重构为 db/ 包                   |
-| `src/agent/db/`（NEW 包）                               | ✨ 替代 checkpoint.py                    |
-| `src/agent/db/__init__.py`                             | ✨ 重新导出所有 CRUD 函数                |
-| `src/agent/db/connection.py`                           | ✨ 连接管理 + schema 自动迁移（4 表）    |
-| `src/agent/db/sessions.py`                             | ✨ 会话 CRUD（create/delete/list/rename）|
-| `src/agent/db/messages.py`                             | ✨ 消息 CRUD（save/load/history/compact）|
-| `src/agent/db/tasks.py`                                | ✨ 任务更新 CRUD（去重 GROUP BY）        |
-| `src/agent/db/tools.py`                                | ✨ 工具使用统计 + 指标持久化             |
-| `src/agent/db/compact.py`                              | ✨ compact_session（keep 参数）          |
-| `src/agent/agent/`（NEW 包）                            | ✨ 替代单文件 agent.py                   |
-| `src/agent/agent/__init__.py`                          | ✨ 重新导出 Agent                       |
-| `src/agent/agent/core.py`                              | ✨ Agent ReAct 循环（astream_events 解析）|
-| `src/agent/agent/streaming.py`                         | ✨ extract_file_refs 工具               |
-| `src/agent/orchestrator.py`（旧）                       | ❌ 已拆分为 orchestrator/ 包             |
-| `src/agent/agent.py`（旧）                              | ❌ 已拆分为 agent/ 包                    |
-| `server.py`                                            | 🔄 重构 — 导入路径、SSE 转发、端点      |
-| `src/agent/acp_agent.py`                               | 🔄 更新导入路径（from src.agent.db ...）|
-| `src/agent/main.py`                                    | 🔄 更新导入路径                          |
-| `src/agent/context/compression.py`                      | 🔄 修改 — turn-based, force 参数        |
-| `tests/test_event_bus.py`                              | ❌ 删除（5 个已删除模块的测试）           |
-| `tests/test_supervisor.py`                             | 🔄 完全重写 — 14 个 Orchestrator 测试    |
-| `tests/test_server.py`                                 | 🔄 更新 — orchestrator_instance + 2 新测试 |
-| `tests/test_mock_flow.py`                              | 🔄 更新 — turn-based 压缩断言            |
-
-### 前端
-
-| 文件                                                         | 变化                                        |
-| ------------------------------------------------------------ | ------------------------------------------- |
-| `ui/src/utils/api.ts`                                        | 🔄 改为 barrel，重新导出 api/ 子模块        |
-| `ui/src/utils/api/types.ts` (NEW)                            | ✨ 类型定义文件（ChatMessage, TaskUpdate 等）|
-| `ui/src/utils/api/endpoints.ts` (NEW)                        | ✨ REST 端点函数（fetchAgents, listSessions 等）|
-| `ui/src/utils/api/sse.ts` (NEW)                              | ✨ SSE 流式通信（streamChatCallbacks, streamOrchestrate）|
-| `ui/src/utils/messageManager.ts`                             | ✨ 消息管理 composable（add/append/merge/restore）|
-| `ui/src/utils/streamManager.ts`                              | ✨ 流管理 composable（3 send paths + abort + typewriter）|
-| `ui/src/utils/useMarkdown.ts` (NEW)                          | ✨ Markdown + KaTeX 渲染 composable          |
-| `ui/src/stores/chat.ts`                                      | 🔄 重构为委托 messageManager + streamManager |
-| `ui/src/components/ChatMessage.vue`                          | 🔄 简化为路由组件 → message/ 子组件         |
-| `ui/src/components/message/UserMessage.vue` (NEW)            | ✨ 用户消息气泡                              |
-| `ui/src/components/message/SystemMessage.vue` (NEW)          | ✨ 系统消息                                  |
-| `ui/src/components/message/AgentMessage.vue` (NEW)           | ✨ 智能体消息气泡（avatar + header + blocks）|
-| `ui/src/components/AgentTaskPanel.vue`                       | ✨ 任务状态面板                              |
-| `ui/src/components/DirectoryTreeBrowser.vue`                 | ✨ 文件树浏览                                |
-
-### 配置
-
-| 文件                          | 变化         |
-| ----------------------------- | ------------ |
-| `config/acp_agents.json`      | ✨ 新增      |
-| `config/tools.json`           | ✨ 新增      |
-| `config/skills.json`          | ✨ 新增      |
-| `.env.example`                | 🔄 新增注释  |
-
-### 测试
-
-| 文件                            | 变化                         |
-| ------------------------------- | ---------------------------- |
-| `tests/test_supervisor.py`      | 🔄 重写：14 个 Orchestrator 测试 |
-| `tests/test_server.py`          | 🔄 更新 + 2 个新端点测试      |
-| `tests/test_mock_flow.py`       | 🔄 turn-based 压缩断言更新    |
-| `tests/test_event_bus.py`       | ❌ 删除（5 个测试）            |
+| 层          | 新增     | 修改      | 删除 |
+| ----------- | -------- | --------- | ---- |
+| 后端 Python | 5 个文件 | 18 个文件 | 0    |
+| 前端 Vue/TS | 2 个文件 | 12 个文件 | 0    |
+| 配置/文档   | 0        | 3 个文件  | 0    |
 
 ---
 
-# 架构概览
+## 第一部分：后端 Python
 
-```
-src/agent/
-├── __init__.py
-├── _utils.py                        # extract_file_refs, SSE_HEADERS
-├── events.py                        # EventType + make_event 工厂
-├── message.py                       # Message dataclass
-├── config.py                        # AgentConfig (.env → Pydantic)
-├── config_manager.py                # ConfigManager (hot-reload JSON)
-├── models.py                        # resolve_model()
-├── agent/                           # 单 agent ReAct 循环
-│   ├── __init__.py
-│   ├── core.py                      # Agent.astream_events()
-│   └── streaming.py                 # extract_file_refs
-├── db/                              # 持久化层
-│   ├── __init__.py
-│   ├── connection.py                # 连接 + schema 迁移
-│   ├── sessions.py                  # 会话 CRUD
-│   ├── messages.py                  # 消息 CRUD
-│   ├── tasks.py                     # 任务更新 CRUD
-│   ├── tools.py                     # 工具使用统计
-│   └── compact.py                   # compact_session
-├── orchestrator/                    # 多 agent 编排
-│   ├── __init__.py
-│   ├── core.py                      # Orchestrator pipeline
-│   ├── planner.py                   # Planner (plan 生成 + 解析)
-│   ├── dispatcher.py                # LocalDispatcher + ACPDispatcher
-│   ├── summarizer.py                # 多 agent 结果汇总
-│   └── _events.py                   # 便捷重导出
-├── context/                         # 上下文管理
-│   ├── compression.py               # turn-based 压缩
-│   └── memory.py                    # MemoryManager
-├── tools/                           # 工具定义
-├── prompts/                         # 系统提示词
-├── acp_agent.py                     # ACP 智能体支持
-├── acp_client.py                    # ACP 客户端
-├── acp/                             # ACP 原生客户端
-├── file_service.py                  # 文件浏览 API
-├── error_handler.py                 # 错误处理 + 熔断
-├── skills.py                        # 技能加载
-├── audit_logger.py                  # 审计日志
-└── backends/                        # 后端抽象
-```
+### 1.1 架构核心重构
 
-# 第一部分：新增 / 变更文件说明
+备份是 **4 阶段过程式流水线**（Plan → Dispatch → Summarize → Metrics），当前是 **3 节点 LangGraph StateGraph**（Supervisor → Execute → Review）。
 
-## 1. `src/agent/events.py` — 统一事件协议
+| 维度          | 备份版本                                                     | 当前版本                                                     |
+| ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| 编排器        | `Orchestrator` 过程式流水线（`planner.py` → `dispatcher.py` → `summarizer.py`） | `Orchestrator` = `StateGraph(GraphState)` 3 节点（`supervisor_node` → `execute_node` → `review_node`） |
+| 计划生成      | `Planner.stream()` 调用 `model.astream()`，产出 `thinking_start/thinking/thinking_done/plan` 事件 | `_supervisor_node_impl()` 调用 `model.ainvoke()`，显式 `yield make_thinking_start/make_thinking/make_thinking_done/make_plan` |
+| 子 Agent 调用 | `LocalDispatcher` / `ACPDispatcher` 接口，各有 `stream()` 方法 | `SubAgentTool(BaseTool)` / `ACPSubAgentTool(BaseTool)`，作为 LangChain Tool 在 `create_react_agent` 中调用 |
+| 审计          | 无（仅 `summarizer.py` 做多步汇总）                          | `_review_node_impl()` 用 `AUDITOR_PROMPT` LLM 审计 + `planner.save_experiences()` 存到 `memory/experiences.md` |
+| 重试          | 无                                                           | `execute_node_impl` 每步 retry 1 次                          |
+| 事件桥接      | 直接 `yield`                                                 | `asyncio.Queue` → `run()` 消费队列                           |
+
+### 1.2 逐个文件差异
+
+#### 新增文件（备份中没有）
+
+| 文件                              | 行数 | 说明                                                  |
+| --------------------------------- | ---- | ----------------------------------------------------- |
+| `src/agent/orchestrator/tools.py` | 123  | `SubAgentTool` / `ACPSubAgentTool` 基于 Tool 的包装器 |
+| `src/agent/tools/load_skill.py`   | —    | 按需加载 skill 的工具                                 |
+| `tests/test_abort.py`             | —    | 中止/取消测试                                         |
+| `tests/test_acp_tools.py`         | —    | ACP 工具集成测试                                      |
+
+#### 修改文件
+
+##### `src/agent/orchestrator/core.py` — **完全重写**
+
+**备份** (227 行): 过程式 `stream()` → `Planner.stream()` plan → `make_dispatcher()` dispatch → `summarize_stream()` summary
+
+**当前** (395 行，+168): 3 节点 StateGraph
 
 ```python
-from enum import Enum
+class GraphState(TypedDict):
+    messages: list[BaseMessage]
+    plan_text: str
+    steps: list[dict]
+    results: list[dict]
+    errors: list[dict]
+    review: str
 
-class EventType(str, Enum):
-    THINKING_START = "thinking_start"
-    THINKING = "thinking"
-    THINKING_DONE = "thinking_done"
-    TOOL_CALL = "tool_call"
-    MESSAGE = "message"
-    PLAN = "plan"
-    TASK_UPDATE = "task_update"
-    METRICS = "metrics"
-    SUMMARY = "summary"
-    ERROR = "error"
-    DONE = "done"
-
-def make_event(event_type: EventType | str, data: Any = "", **extra) -> dict:
-    ...
-
-# 便捷工厂
-def make_thinking(data, agent_name="") -> dict: ...
-def make_plan(data, agent_name="") -> dict: ...
-def make_message(data, agent_name="", file_refs=None) -> dict: ...
-def make_tool_call(name, args, status="running", agent_name="") -> dict: ...
-def make_task_update(agent, task, status, state=None) -> dict: ...
-def make_metrics(elapsed_ms, agent_calls, tokens, agent_name="") -> dict: ...
-def make_summary(data, agent_name="") -> dict: ...
-def make_error(data, agent_name="") -> dict: ...
-def make_done(agent_name="") -> dict: ...
+graph = StateGraph(GraphState)
+graph.add_node("supervisor", supervisor_node)
+graph.add_node("execute", execute_node)
+graph.add_node("review", review_node)
+graph.add_edge("supervisor", "execute")
+graph.add_edge("execute", "review")
+graph.add_conditional_edges("review", lambda s: "end" if s.get("review") else "execute")
 ```
 
-## 2. `src/agent/orchestrator/` 包
+关键函数：
 
-### 2.1 `core.py` — Orchestrator 类
+- `_supervisor_node_impl()` — `model.ainvoke()`，产出 thinking_start/thinking/thinking_done/plan 事件
+- `_parse_plan(text)` — 正则 `r"^\s*[-*]\s*(\w+)\s*[:：]\s*(.+)"` 解析 plan
+- `_execute_node_impl(state)` — 逐个执行 steps，dispatch SubAgentTool/ACPSubAgentTool，track running tools，push task_update
+- `_review_node_impl(state)` — `AUDITOR_PROMPT` + model.ainvoke()，存 experiences，push audit_summary
+- `run(task, history, summary)` — 消费 asyncio.Queue，yield 事件
 
-构造：`Orchestrator(config)` → 解析 AgentConfig，构建 sub_agents + acp_agents map。
+##### `src/agent/orchestrator/planner.py` — **简化**
 
-主流程 `stream(task, history, summary)`：
+**备份** (195 行): `_build_prompt()` + `stream()` + `parse_plan()` 全部在 Planner 类中
 
-```
-yield thinking_start → [thinking chunks] → thinking_done → plan
-→ 解析出 steps
-→ 若全是 direct → cleanup 后直接 yield message
-→ 否则逐个 dispatch：
-    yield task_update(running) → [thinking / tool_call / message] → task_update(completed)
-→ 若 results > 1 → yield summary
-→ yield metrics → yield done
-```
+**当前** (103 行，-92): 仅保留 `load_experiences()` / `save_experiences()` / `build_agent_descriptions()` / `_convert_history()`
 
-### 2.2 `planner.py` — Planner 类
+计划生成已移至 `core.py` 的 `_supervisor_node_impl()`。
 
-- `_build_prompt(history, summary)` — 从 config/agents.json + 模板构造 system prompt
-- `_convert_history(history)` — 将 Python dict 列表转为 LLM 消息格式
-- `stream(task, history, summary)` — 调用 model.astream()，产出 thinking_start / thinking / thinking_done / plan
+##### `src/agent/orchestrator/_events.py` — +1 行
 
-`_PLAN_RE = r"^\s*-?\s*\**\s*(\w+)\s*\**\s*[:：]\s*(.+)", re.MULTILINE`
+添加 `make_audit_summary` 和 `EventType` 导入。
 
-### 2.3 `dispatcher.py` — Dispatcher 类
+##### `src/agent/orchestrator/dispatcher.py` — **增强**
 
-`make_dispatcher(agent_id, sub_agents, acp_agents, config)` → 返回 `LocalDispatcher` 或 `ACPDispatcher`。
+**备份** (205 行): 基础版本
 
-- **LocalDispatcher.stream(task)** — 调用 `sub_agents[agent_id].astream_events()`
-- **ACPDispatcher.stream(task, context)** — 调用 `get_acp_agent().run()`
+**当前** (238 行，+33):
 
-两种 dispatcher 都会过滤 punctuation-only 内容，fallback 为 `"by {agent} done"`。
+- `LocalDispatcher.stream()`: 添加 `recursion_limit=200`、`try/except` 错误处理
+- `ACPDispatcher.stream()`: 添加连接时间测量、"正在连接..." thinking 事件、agent_id 查找回退、`previous_results → context`
 
-### 2.4 `summarizer.py` — summarize_stream()
+##### `src/agent/events.py` — +审计事件
 
-```python
-async def summarize_stream(model, task, results, start_time) -> AsyncIterator[dict]:
-    yield summary event
-    yield metrics event
-    yield done
-```
+- 添加 `AUDIT_SUMMARY: Final[str] = "audit_summary"` 事件类型
+- 添加 `make_audit_summary(agent_name, data)` 工厂函数
+- events 架构表新增 `audit_summary` 行
+- `EventType` enum 包含 `AUDIT_SUMMARY`
 
-仅当 `len(results) > 1` 时才调用 LLM 总结，否则直接 yield metrics + done。
+##### `src/agent/prompts/system_prompt.py` — **提示词重构**
 
-## 3. `src/agent/db/` 包
+**备份**: `SUPERVISOR_PROMPT`（硬编码 agent 列表）+ `SUPERVISOR_PROMPT_TEMPLATE`
 
-### 3.1 `connection.py`
+**当前**:
 
-```python
-_conn: sqlite3.Connection | None = None
+- `SUPERVISOR_PLAN_PROMPT` — 使用 `{agent_descriptions}` + `{experiences}` 占位符，`{{task}}`（转义），语言无关响应
+- `EXECUTE_PLAN_PROMPT` (新增) — 执行计划提示词
+- `AUDITOR_PROMPT` (新增，中文) — 审计提示词，要求用中文输出结构化审计报告（总结/各 Agent 结果/问题与经验/对未来会话建议）
 
-def _get_conn() -> sqlite3.Connection:
-    # 延迟连接 + schema 迁移
-    # 4 张表：sessions, messages, tool_usage, task_updates
-    # 逐列 ALTER TABLE 进行 schema 迁移
-```
+##### `src/agent/agent/core.py` — **惰性加载重构**
 
-### 3.2 `sessions.py`
+**备份**: `__init__` 中急切初始化 `self.tools = TOOLS`, `self.compressor`, `self.agent_graph`
 
-| 函数 | 功能 |
-|------|------|
-| `create_session(title, project_path)` | 创建会话 |
-| `delete_session(session_id)` | 级联删除 messages + task_updates |
-| `list_sessions()` | 列表 |
-| `rename_session(session_id, title)` | 重命名 |
-| `update_session_status(session_id, status)` | 更新状态 |
-| `update_session_duration(session_id, ms)` | 更新耗时 |
-| `update_session_project_path(session_id, path)` | 更新项目路径 |
-| `get_session_summary(session_id)` | 获取摘要 |
+**当前**: 惰性加载
 
-### 3.3 `messages.py`
+- `self._tools = None` → `_ensure_tools()` 首次调用时 `get_tools()`
+- `self._prompt = None` → `_ensure_prompt()` 首次调用时格式化 SYSTEM_PROMPT
+- `self._graph = None` → `_ensure_graph()` 首次调用时 `create_agent()`
+- 导入从 `from src.agent.tools import TOOLS` 改为 `from src.agent.tools import get_tools`
 
-| 函数 | 功能 |
-|------|------|
-| `save_message(session_id, role, content, ...)` | 保存单条消息 |
-| `save_turn(session_id, user_msg, ai_msg, ...)` | 保存一轮对话 |
-| `load_messages(session_id)` | 返回 Message 对象列表 |
-| `load_history(session_id)` | 返回 LangChain BaseMessage 列表 |
-| `load_history_with_meta(session_id)` | 返回前端格式 dicts |
+##### `src/agent/tools/__init__.py` — **热重载**
 
-### 3.4 `tasks.py`
+**备份**: 静态 `TOOLS = _load_tools_from_config()`
 
-| 函数 | 功能 |
-|------|------|
-| `save_task_update(session_id, agent, task, status)` | 保存任务更新 |
-| `load_task_updates(session_id)` | 加载（去重：MAX(id) GROUP BY agent,task） |
-| `delete_task_updates(session_ids)` | 批量删除 |
+**当前**: `get_tools()` 每次通过 ConfigManager 惰性读取（支持热重载）；`TOOLS = get_tools()` 变为函数调用别名
 
-### 3.5 `tools.py`
+##### `src/agent/models.py` — +日志
 
-| 函数 | 功能 |
-|------|------|
-| `record_tool_usage(session_id, tool, duration_ms, success)` | 记录工具使用 |
-| `get_tool_usage_stats()` | 统计 |
-| `save_metrics(session_id, data)` | 保存指标 |
-| `load_metrics(session_id)` | 加载指标 |
+添加 `import logging`、`logger = logging.getLogger(__name__)`、`[LLM MODEL]` 日志
 
-### 3.6 `compact.py`
+##### `src/agent/skills.py` — **输出格式变更**
 
-```python
-def compact_session(session_id, summary, keep=5) -> int:
-    # 标记早期的 keep 条之外的消息为 compacted=1
-    # 更新 sessions.summary + compacted_at
-    # 返回标记行数
-```
+**备份**: 输出完整 skill 内容 `## {name}\n{content}`
 
-## 4. 前端拆分详情
+**当前**: 输出 `[Available Skills]` 摘要列表 `- {name}: {description}`，指示 LLM 使用 `load_skill` 工具按需加载；支持按 `agent_id` 过滤
 
-### 4.1 `api/types.ts` — 所有类型定义
+##### `src/agent/acp_agent.py` — +权限 +thinking_start
 
-```typescript
-export type AgentStatus = 'idle' | 'receiving' | 'deciding' | 'thinking' | ...
-export interface ChatMessage { role, content, toolCalls?, agentName?, thinking?, ... }
-export interface TaskUpdate { agent, task, status, state?, startedAt?, ... }
-export interface MetricsData { elapsed_ms, agent_calls, tokens }
-export interface SessionInfo { session_id, title, status, ... }
-export interface BrowseNode { path, name, type, children?, ... }
-// + LogEntry, ACPAgentInfo, CliInfo, FileInfo, etc.
-```
+- 添加 `resolve_permission(self, req_id, option_id)` 方法
+- ACP run 开始时先 yield `thinking_start` 事件
+- 处理 `permission_request` 事件（添加 agent_id 后 yield）
+- +15 行（193 vs 178）
 
-### 4.2 `api/endpoints.ts` — REST 函数
+##### `src/agent/acp_client.py` — +permission_request
 
-```typescript
-listTools(), fetchAgents(), fetchAcpAgents(), updateAgentConfig()
-fetchFileTree(), fetchFileContent(), fetchCliList()
-listSessions(), createSession(), deleteSessionById(), renameSessionById()
-restoreSession(), browseDirectories(), listDrives(), compactSession()
-```
+- `AgentEvent` 的 `type` docstring 添加 `"permission_request"`
+- `_map_acp_event()` 添加 `elif event.type == "permission_request":` 映射
 
-### 4.3 `api/sse.ts` — 流式通信
+##### `src/agent/acp/client.py` — **大幅扩展**
 
-```typescript
-streamChatCallbacks(message, onEvent, onDone, sessionId?)  // 回调风格
-streamChatFetch(message, sessionId?)                       // async iterator
-streamOrchestrate(task, sessionId?)                        // async iterator
-```
+**备份** (385 行): 基础 ACP 客户端
 
-### 4.4 `messageManager.ts` — 消息状态管理
+**当前** (648 行，+263):
 
-```typescript
-export function useMessageManager() {
-  // state
-  messages: Ref<ChatMessage[]>
-  typewriterState, thinkTypeState
-  taskItems: Ref<TaskUpdate[]>
-  metrics: Ref<MetricsData | null>
+- `__init__` 添加 `cwd` 参数、`_pending_permissions` dict
+- 添加 `_send_response()` / `_log_notification()` / `load_session()` / `create_session()`
+- `prompt()` 重写：5s 轮询、last_event_time、permission_request 处理、空闲检测、try/except TimeoutError + CancelledError
+- 新增 `_execute_tool()` → `_tool_read()` / `_tool_write()` / `_tool_edit()` / `_tool_bash()` / `_tool_glob()` / `_tool_grep()`
+- `_parse_notification()` 扩展：`tool_call` 拆分为 `tool_call` + `tool_call_update`（in_progress/completed/failed）
+- 添加 `resolve_permission()`
 
-  // mutations — 所有操作通过数组索引修改，禁止本地引用
-  addUser(content), addSystem(content)
-  addAssistant(agentName, opts?), ensureAssistant(agentName)
-  appendContent(index, text), setContent(index, text)
-  setThinkingStart(index), appendThinking(index, text), setThinkingDone(index)
-  mergeToolCalls(agentName, toolCalls)
-  pushPlan(content), addSummary(content), addError(content)
-  updateTask(t), setMetrics(m)
-  restore(raw: any[]), clear()
-}
-```
+##### `src/agent/db/__init__.py` — +reconcile_session_tasks
 
-### 4.5 `streamManager.ts` — 流通信管理
+导出 `reconcile_session_tasks`（来自 `db/tasks`）
 
-```typescript
-export function useStreamManager(msg, sessionId) {
-  // state
-  isLoading, streamingActive, eventLog
-  currentPhase, currentDispatch
-  pendingMessages
+##### `src/agent/db/tasks.py` — +reconcile_session_tasks
 
-  // 3 send paths
-  sendMessage(text)         // EventSource → /chat 端点
-  sendOrchestrate(text)     // async generator → /api/orchestrate
-  sendACP(agentId, text)    // fetch+reader → /acp/send
+新增 `reconcile_session_tasks(session_id)` 函数，将 session 中 `running`/`pending` 任务标记为 `failed`（用于会话恢复）
 
-  // control
-  abort(), abortAndSend(text)
-  handleCompact()
-  checkAcpAvailable(agentId)
-}
-```
+##### `server.py` — +权限端点 +finally 协调
 
-事件调度规则：
+**备份** (1123 行) **当前** (1160 行)：
 
-| SSE Event | MessageManager 操作 |
-|-----------|-------------------|
-| `thinking_start` | `setThinkingStart(idx)` |
-| `thinking` | `appendThinking(idx, chunk)` |
-| `thinking_done` | `setThinkingDone(idx)` |
-| `plan` | `pushPlan(planText)` + 更新 `currentPhase` |
-| `message` | `appendContent(idx, chunk)` |
-| `tool_call` | `mergeToolCalls(agentName, tcs)` |
-| `task_update` | `updateTask(taskData)` |
-| `summary` | `addSummary(summary)` |
-| `metrics` | `setMetrics(metrics)` |
-| `error` | `addError(error)` |
-| `done` | 清理 + 设置 `isLoading = false` |
+| 差异                                | 说明                                                         |
+| ----------------------------------- | ------------------------------------------------------------ |
+| 导入                                | 新增 `reconcile_session_tasks` 导入                          |
+| `PermissionResponseRequest`         | 新增 Pydantic model                                          |
+| `POST /chat` finally                | 新增 `if not _saved` 保存 + `reconcile_session_tasks(session_id)` |
+| `GET /chat/stream` finally          | 新增 `if not _saved` 保存 + `reconcile_session_tasks(sid)`   |
+| `POST /api/orchestrate` finally     | 新增 `_save_accumulated()` + `reconcile_session_tasks(session_id)` |
+| `POST /api/acp/permission-response` | **新增端点** — 解析 ACP 权限请求                             |
 
-### 4.6 `stores/chat.ts` — Pinia 封装
+##### `tests/test_supervisor.py` — **完全重写**
 
-```typescript
-export const useChatStore = defineStore('chat', () => {
-  const msg = useMessageManager()
-  const sessionId = ref<string | null>(null)
-  const stream = useStreamManager(msg, sessionId)
+**备份** (347 行): Mock `model.astream()`，测试 Planner + Dispatcher 路径
 
-  // sync sessionId → restoreSession
-  watch(() => sessionsStore.activeSessionId, ...)
+**当前** (414 行，+67): Mock `model.ainvoke()` + StateGraph 模拟
 
-  // 暴露与旧版兼容的 API
-  return { messages, isLoading, streamingActive, sessionId,
-           send, sendOrchestrate, sendACP, abort,
-           clearMessages, newSession, restoreSession, ... }
-})
-```
-
-### 4.7 `useMarkdown.ts` — Markdown 渲染
-
-```typescript
-export function renderMd(text: string): string
-```
-
-基于 marked + highlight.js + KaTeX，支持 `$$` 块级公式和 `$` 行内公式，含中文跳过。
-
-### 4.8 ChatMessage 子组件
-
-```
-ChatMessage.vue          # 路由：role === 'user' → UserMessage
-                                    'system' → SystemMessage
-                                    'assistant' → AgentMessage
-
-message/UserMessage.vue   # 用户气泡（右对齐，淡入）
-message/SystemMessage.vue # 系统消息（居中，含 ErrorBlock）
-message/AgentMessage.vue  # 智能体气泡（avatar + header + handoff + thinking
-                          #   + tool_calls + results + summary + content + file_refs）
-```
+- `_make_chunk` 使用 `MagicMock(spec=object)`（仅 content，无 additional_kwargs）
+- `_make_model_response()` 同步返回 mock
+- 测试: `test_run_produces_plan_audit_metrics_done`、`test_events_in_correct_order`（plan → audit_summary）、`test_execute_node_retries_on_error`、`test_execute_node_skips_unknown_agent`、`test_audit_summary_contains_results`、`test_planner_builds_agent_descriptions`、`test_planner_converts_history`、`test_run_acp_agent_dispatch`
 
 ---
 
-# 第二部分：关键修改（server.py, checkpoint.py 等）
+## 第二部分：前端 Vue/TS
 
-## 5. `server.py` 修改要点
+### 2.1 架构区别
 
-### 5.1 导入路径变化
+备份使用**索引字典 + 辅助函数**管理消息槽；当前使用**统一的 `ensureAssistant(agentName)`**，按 agentName 从后向前扫描复用消息。
 
-```python
-# 新
-from src.agent._utils import SSE_HEADERS, is_punctuation_only
-from src.agent.orchestrator import Orchestrator    # 替换 CustomSupervisor
-from src.agent.db import (                         # 替换 checkpoint 模块
-    create_session, delete_session, save_message, save_turn,
-    load_history, load_history_with_meta,
-    save_task_update, load_task_updates,
-    compact_session as db_compact_session,
-    get_session_summary, get_tool_usage_stats,
-    save_metrics, load_metrics,
-    ...
-)
+| 维度       | 备份版本                                                     | 当前版本                                           |
+| ---------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| 消息槽定位 | `ensureAgentMsg(agentName)` + `ensureSupervisorMsg()` + 两套索引 | 统一 `msg.ensureAssistant(agentName)`              |
+| 事件流     | `pushPlan()` 创建新 div                                      | `plan` 写入已有 supervisor div                     |
+| 审计摘要   | 无                                                           | `audit_summary` 事件 + `setAuditSummary()`         |
+| 权限对话框 | 无                                                           | `PermissionDialog.vue` + `permission_request` 事件 |
+| 测试框架   | 无 vitest                                                    | `vitest` + 2 个测试文件（11 个测试）               |
 
-# 删除
-from src.agent.event_bus import event_bus           # 删除
-from src.agent.supervisor import CustomSupervisor   # 删除
-from src.agent.checkpoint import ...                # 替换
-```
+### 2.2 逐个文件差异
 
-### 5.2 全局单例
+#### 新增文件（备份中没有）
 
-```python
-orchestrator_instance: Orchestrator | None = None
-def get_supervisor() -> Orchestrator: ...
-def get_agent() -> Agent: ...
-```
+| 文件                                     | 说明                               |
+| ---------------------------------------- | ---------------------------------- |
+| `ui/src/components/PermissionDialog.vue` | ACP 权限请求对话框（固定全屏浮层） |
+| `ui/src/utils/api/sse.test.ts`           | SSE 流处理单元测试                 |
 
-### 5.3 SSE 事件处理（`stream()` 端点）
+#### 修改文件
 
-```
-flowchart:
-  _passthrough → event loop:
-    thinking_start → record flag
-    thinking → append to _thinking_accum
-    thinking_done → _save_accumulated()
-    message → append to _message_accum + forward
-    tool_call → save_message(..., tool_calls=json.dumps(tcs))
-    plan → save_message(..., name="plan")
-    task_update → save_task_update(...)
-    summary → save_message(..., name="summary")
-    metrics → save_metrics(...)
-    error → save fallback
-    done → _save_accumulated()
-```
+##### `ui/src/utils/streamManager.ts` — **重大重构**
 
-### 5.4 `/api/compact` — force + keep
+**备份**: 使用 `supervisorMsgIdx` + `agentMsgIndices` 两套索引；`plan` → `pushPlan()` 创建新 div
 
-```python
-marked = db_compact_session(request.session_id, summary_text, keep=1)
-```
+**当前**: 统一 `msg.ensureAssistant(agentName)`
 
-### 5.5 新增端点
+具体差异：
 
-| 端点 | 用途 |
-|------|------|
-| `PATCH /api/sessions/{id}/title` | 重命名会话 |
-| `PATCH /api/sessions/{id}/project-path` | 更新项目路径 |
-| `DELETE /api/sessions/{id}` | 删除会话 |
-| `GET /api/files/tree` | 文件树 |
-| `POST /api/files/pick-directory` | Windows 文件夹选择 |
-| `POST /api/files/validate-directory` | 目录校验 |
-| `GET /api/files/browse` | 目录递归浏览 |
-| `GET /api/files/drives` | 驱动器列表 |
-| `GET /api/files/content` | 文件内容 |
-| `GET /api/acp/agents` | ACP agent 列表 |
-| `GET /api/acp/check/{id}` | ACP 可用性检查 |
-| `GET /api/acp/sessions/{id}` | ACP session 列表 |
+- **导入**: 新增 `PermissionRequest` 类型引入
+- **状态**: 新增 `permissionRequest` ref；移除 `_lastAgent`
+- **`_setSessionStatus`**: 新增 session 不在本地列表时 `unshift` 创建
+- **`sendOrchestrate`**:
+  - 移除 `supervisorMsgIdx` / `agentMsgIndices` / `ensureSupervisorMsg` / `ensureAgentMsg`
+  - 所有事件用 `msg.ensureAssistant(agentName)` 获取消息索引
+  - `plan` 事件：`msg.ensureAssistant('supervisor')` → 直接设 `content=planText` + 清 thinking + 停 typewriter（不再调用 `pushPlan`）
+  - `tool_call` 事件：新增 result/completed 分支（标记 pending/running → done + `clearCompletedToolCalls()`）
+  - `message` 事件：用 `_enqueueStep` + `appendContent`（备份为直接 `setContent`）
+  - `task_update` 事件：用 `msg.ensureAssistant(update.agent)` 替代 `agentMsgIndices`
+  - 新增 `audit_summary` 事件处理
+  - 新增 `permission_request` 事件处理
+  - finally 块：迭代所有 assistant 消息标记 done（备份用 `agentMsgIndices` 字典）
+- **`sendACP`**: 添加 `_appendLog` 调试日志、`permission_request` 处理、finally 块清理 `permissionRequest`
+- **`abort`**: 保留 `msg.reconcileStreamEnd()` 调用
+- **`send`**: 移除 `_lastAgent` 逻辑
+- 返回对象新增 `permissionRequest`
 
-### 5.6 删除端点
+##### `ui/src/utils/messageManager.ts`
 
-- `/api/events/stream/{stream_id}` — event_bus 删除后不再需要
+- 新增 `auditSummary` ref + `setAuditSummary(text)` + `clearCompletedToolCalls()`
+- `setMetrics()` 改为增量合并 tokens（`{ ...prev.tokens, ...data.tokens }`）
+- `clear()` / `resetTaskItems()` 新增 `auditSummary.value = null`
+- `reconcileStreamEnd()` 新增 toolCalls 清理逻辑（pending/running → done + `clearCompletedToolCalls()`）
 
-## 6. `tests/test_supervisor.py` 重写
+##### `ui/src/stores/chat.ts`
 
-14 个测试，覆盖：
-- **TestParsePlan**: basic_plan, bold_agent_name, chinese_colon, single_agent, empty_plan, extra_text_ignored
-- **TestExtractCode**: fenced_block, inline_backticks, plain_text
-- **TestOrchestratorInit**: init_with_mock_model
-- **TestOrchestratorRun**: run_single_agent, run_direct_agent, run_no_plan_fallback, run_acp_agent_dispatch
+- Pinia store 暴露新增 `auditSummary: msg.auditSummary`、`permissionRequest: stream.permissionRequest`
 
-Mock 方式：`unittest.mock.patch("src.agent.models.resolve_model")`。
+##### `ui/src/components/ChatTab.vue`
 
-## 7. 关键导入技巧
+- **导入**: 新增 `PermissionDialog` 导入
+- **消息过滤条件**: `msg.content || msg.toolCalls?.length || msg.thinking || msg.isThinking`
+- **模板**: 新增 `<PermissionDialog>` 区块（`.input-zone` 之上）
+- **`.input-zone`**: `InputBar` 传递 `permissionPending` prop
+- **样式**: 保留 `.input-zone` CSS
 
-`planner.py` 和 `core.py` 使用 `from src.agent import models as _models` + `_models.resolve_model()` 而非 `from src.agent.models import resolve_model`，确保 `unittest.mock.patch()` 在所有消费者中生效（避免 Python import 绑定泄露）。
+##### `ui/src/components/InputBar.vue`
+
+- **Props**: 新增 `permissionPending?: boolean`
+- **模板**: input 添加 `:disabled="permissionPending"`；占位符根据 `permissionPending` 切换
+
+##### `ui/src/components/TopologyBar.vue`
+
+- `agentLabel` computed 恢复（从 `chat.taskItems` 取第一个非 supervisor 的 agent 名称）
+- `watch(supState)` 恢复完整逻辑
+
+##### `ui/src/components/ThinkingPanel.vue`
+
+- `activeAgent` computed 恢复（取最后一条 thinking 数据块的 agent）
+- 模板标题用 `activeAgent` 而非硬编码
+
+##### `ui/src/components/MonitorPanel.vue`
+
+- 导入恢复 `useSessionsStore`
+- 计时器用 `watch(sessionsStore.activeSessionId)` 而非固定时间
+- 模板恢复审计摘要区块（`chat.auditSummary`）
+
+##### `ui/src/components/ToolCallBlock.vue`
+
+- `toolIcon` 图标映射不同
+- CSS 差异：`.tool-call-block` 从 `margin: 3px 0 3px 38px` → `width: 100%` / `margin-left: 0`；紫色主题 → 默认主题
+
+##### `ui/src/components/message/AgentMessage.vue`
+
+- 工具调用状态: `tc.status || (isTyping && j === msg.toolCalls!.length - 1 ? 'running' : 'done')`（备份为 `!isTyping ? 'done' : ...`）
+- `.tool-calls` CSS 恢复 `width: 100%` + `align-items: flex-start`
+
+##### `ui/src/utils/api/types.ts`
+
+- 新增 `PermissionRequest` 接口定义（`req_id`, `session_id`, `toolCall`, `options`）
+
+##### `ui/package.json`
+
+- **scripts**: 新增 `"test": "vitest run"`、`"test:watch": "vitest"`
+- **devDependencies**: 新增 `"vitest": "^4.1.8"`
+
+##### `ui/vite.config.ts`
+
+- 新增 `/// <reference types="vitest" />` 指令
+- 新增 `test` 配置块（`environment: 'node'`, `include: ['src/**/*.test.ts']`）
 
 ---
 
-# 恢复步骤
+## 第三部分：配置/文档
+
+| 文件                 | 差异                                                         |
+| -------------------- | ------------------------------------------------------------ |
+| `config/agents.json` | 3 处 desc 中文润色（direct/opencode/claude）；`load_skill` 工具条目存在于当前、不在备份 |
+| `config/tools.json`  | 当前版本包含 `load_skill` 工具配置；备份中无                 |
+| `AGENTS.md`          | 备份已精简：去掉副标题、删命令行、更新测试计数 55→69、删 StateGraph gotchas 6 条、删 ACP anti-pattern 整节 |
+
+---
+
+## 第四部分：恢复步骤（备份 → 当前）
+
+### 4.1 后端 Python
 
 ```bash
-# 1. 从备份复制基础
-cp -r diff/langgraph-agent-v2-main/* .
+# 1. 新增文件
+# src/agent/orchestrator/tools.py
+#   → SubAgentTool(BaseTool), ACPSubAgentTool(BaseTool)
+#   → 使用 create_react_agent 构建 sub-agent，dispatch ACP 时用 get_acp_agent()
+#
+# src/agent/tools/load_skill.py
+#   → load_skill tool，通过 ConfigManager 读取 skill 内容
 
-# 2. 删除不再使用的文件
-rm src/agent/supervisor.py src/agent/graph.py src/agent/event_bus.py
-rm src/agent/state.py
-rm src/agent/orchestrator.py  # 旧单体
-rm src/agent/agent.py         # 旧单体
-rm src/agent/checkpoint.py    # 已拆分为 db/ 包
-rm tests/test_event_bus.py
-
-# 3. 创建新增文件
-# --- 后端 ---
+# 2. 替换文件
+# src/agent/orchestrator/core.py
+#   → 备份的流水线替换为 3 节点 StateGraph
+#   → 添加 _supervisor_node_impl / _execute_node_impl / _review_node_impl
+#   → 添加 _parse_plan() 正则解析
+#   → run() 改为 asyncio.Queue + graph.ainvoke()
+#
+# src/agent/orchestrator/planner.py
+#   → 删除 _build_prompt(), stream(), parse_plan()
+#   → 保留 load_experiences(), save_experiences(), build_agent_descriptions(), _convert_history()
+#
+# src/agent/orchestrator/_events.py
+#   → 添加 make_audit_summary 导入
+#
+# src/agent/orchestrator/dispatcher.py
+#   → LocalDispatcher: 添加 recursion_limit=200 + try/except
+#   → ACPDispatcher: 添加连接时间 + "正在连接..." event + agent_id 回退
+#
 # src/agent/events.py
-# src/agent/message.py
-# src/agent/_utils.py
-# src/agent/orchestrator/__init__.py, core.py, planner.py, dispatcher.py, summarizer.py, _events.py
-# src/agent/db/__init__.py, connection.py, sessions.py, messages.py, tasks.py, tools.py, compact.py
-# src/agent/agent/__init__.py, core.py, streaming.py
-# --- 前端 ---
-# ui/src/utils/api/types.ts, endpoints.ts, sse.ts
-# ui/src/utils/messageManager.ts
-# ui/src/utils/streamManager.ts
-# ui/src/utils/useMarkdown.ts
-# ui/src/components/message/UserMessage.vue, SystemMessage.vue, AgentMessage.vue
-# ui/src/components/AgentTaskPanel.vue
-# ui/src/components/DirectoryTreeBrowser.vue
-# --- 配置 ---
-# config/acp_agents.json (空 [])
-# config/tools.json (空 [])
-# config/skills.json (空 [])
-
-# 4. 替换已有文件
-# server.py (导入路径 + SSE 处理 + 端点)
-# ui/src/stores/chat.ts (委托 messageManager + streamManager)
-# ui/src/utils/api.ts (barrel 重导出)
-# ui/src/components/ChatMessage.vue (路由到 message/ 子组件)
-
-# 5. 删除测试备份
-# tests/test_supervisor.py → 用重写版本替换
-# tests/test_server.py → 更新
-# tests/test_mock_flow.py → 更新 (turn-based)
-
-# 6. 安装依赖
-pip install -e ".[dev]"
-cd ui && npm install
-
-# 7. 验证
-cd ..
-pytest --cov=src -v
-ruff check .
-cd ui && npx vue-tsc -b && npx vite build
+#   → 添加 AUDIT_SUMMARY 事件类型 + make_audit_summary()
+#   → EventType 包含 AUDIT_SUMMARY
+#
+# src/agent/prompts/system_prompt.py
+#   → 备份的 SUPERVISOR_PROMPT + SUPERVISOR_PROMPT_TEMPLATE
+#   → 替换为 SUPERVISOR_PLAN_PROMPT + EXECUTE_PLAN_PROMPT + AUDITOR_PROMPT(中文)
+#
+# src/agent/agent/core.py
+#   → 急切初始化 → 惰性加载（_ensure_tools/_ensure_prompt/_ensure_graph）
+#   → TOOLS → get_tools()
+#
+# src/agent/tools/__init__.py
+#   → 静态 TOOLS → 函数 get_tools()（ConfigManager 惰性读取）
+#
+# src/agent/skills.py
+#   → get_skills_prompt() 输出格式改为 [Available Skills] 摘要
+#
+# src/agent/acp_agent.py
+#   → 添加 resolve_permission()
+#   → 添加 thinking_start 事件
+#   → 处理 permisson_request
+#
+# src/agent/acp_client.py
+#   → AgentEvent type 添加 "permission_request"
+#   → _map_acp_event() 添加映射
+#
+# src/agent/acp/client.py
+#   → 大幅扩展：_send_response, _log_notification, load_session
+#   → prompt() 重写：5s 轮询, permission_request 处理
+#   → 新增 _execute_tool + 6 个工具方法
+#   → _parse_notification 扩展
+#   → resolve_permission()
+#
+# src/agent/db/__init__.py
+#   → 导出 reconcile_session_tasks
+#
+# src/agent/db/tasks.py
+#   → 添加 reconcile_session_tasks()
+#
+# server.py
+#   → 导入 reconcile_session_tasks
+#   → 添加 PermissionResponseRequest
+#   → 3 个 SSE 端点 finally 块添加 reconcile_session_tasks()
+#   → 添加 POST /api/acp/permission-response 端点
+#
+# tests/test_supervisor.py
+#   → 完全替换：mock model.ainvoke() + StateGraph 测试
 ```
+
+### 4.2 前端 Vue/TS
+
+```bash
+# 1. 新增文件
+# ui/src/components/PermissionDialog.vue
+# ui/src/utils/api/sse.test.ts
+
+# 2. 替换文件
+# ui/src/utils/streamManager.ts
+#   → 删除: supervisorMsgIdx, agentMsgIndices, ensureSupervisorMsg(), ensureAgentMsg()
+#   → 修改: 所有事件 handler 用 msg.ensureAssistant(agentName)
+#   → plan handler: 删 pushPlan() → msg.ensureAssistant('supervisor') + 设 content + 停 typewriter
+#   → tool_call handler: 添加 result/completed 分支 + clearCompletedToolCalls()
+#   → message handler: _enqueueStep + appendContent
+#   → task_update handler: msg.ensureAssistant(update.agent)
+#   → 新增: audit_summary / permission_request 事件处理
+#   → finally: 迭代所有 assistant 消息
+#   → sendACP: 添加 _appendLog / permission_request / finally 清理
+#   → abort: 保留 reconcileStreamEnd()
+#   → 返回: 添加 permissionRequest
+#
+# ui/src/utils/messageManager.ts
+#   → 添加 auditSummary ref + setAuditSummary() + clearCompletedToolCalls()
+#   → setMetrics() 增量合并 tokens
+#   → reconcileStreamEnd() 添加 toolCalls 清理
+#
+# ui/src/stores/chat.ts
+#   → 添加 auditSummary / permissionRequest 暴露
+#
+# ui/src/components/ChatTab.vue
+#   → 消息过滤: 恢复 thinking/isThinking 条件
+#   → 模板: 添加 PermissionDialog
+#   → input-zone: 恢复 .input-zone div + permissionPending prop
+#
+# ui/src/components/InputBar.vue
+#   → 添加 permissionPending prop + 禁用/占位符逻辑
+#
+# ui/src/components/MonitorPanel.vue
+#   → 恢复 sessionsStore 导入 + watch 计时器
+#   → 恢复 auditSummary 区块
+#
+# ui/src/components/ToolCallBlock.vue
+#   → 回退 margin 到 0 / width 100%
+#   → 默认主题（非紫色）
+#
+# ui/src/components/message/AgentMessage.vue
+#   → tool_call status 逻辑回退
+#   → .tool-calls CSS 恢复 width 100%
+#
+# ui/src/utils/api/types.ts
+#   → 添加 PermissionRequest 接口
+#
+# ui/package.json
+#   → 添加 vitest devDependency + test scripts
+#
+# ui/vite.config.ts
+#   → 添加 vitest reference + test 配置
+
+# 3. 配置
+# config/agents.json: 添加 load_skill 工具引用（可选）
+# config/tools.json: 添加 load_skill 工具配置
+```
+
+### 4.3 验证
+
+```bash
+# 后端
+cd <project_root>
+pytest tests/test_supervisor.py -v            # 20 tests
+ruff check .                                  # 仅预存 E501
+
+# 前端
+cd ui
+npm install                                    # 安装 vitest
+npx vitest run                                 # 11 tests
+npx vue-tsc --noEmit                           # type-check clean
+```
+
+---
+
+## 附录：关键差异速查表
+
+| 备份中的写法                        | 当前写法                                                   |
+| ----------------------------------- | ---------------------------------------------------------- |
+| `ensureAgentMsg(name)`              | `msg.ensureAssistant(name)`                                |
+| `ensureSupervisorMsg()`             | `msg.ensureAssistant('supervisor')`                        |
+| `msg.pushPlan(planText)`            | `msg.ensureAssistant('supervisor')` + `content = planText` |
+| `agentMsgIndices[name]`             | `msg.ensureAssistant(name)`                                |
+| `supervisorMsgIdx`                  | 删除，统一用 `msg.ensureAssistant('supervisor')`           |
+| `audit_summary` 不处理              | `msg.setAuditSummary(data)`                                |
+| `permission_request` 不处理         | `permissionRequest.value = data`                           |
+| `from src.agent.tools import TOOLS` | `from src.agent.tools import get_tools`                    |
+| 静态 `TOOLS`                        | 函数 `get_tools()` 热重载                                  |
+| `model.astream()` plan              | `model.ainvoke()` plan                                     |
+| `LocalDispatcher.stream()`          | `SubAgentTool._arun()`                                     |
+| 无 reconcile                        | `reconcile_session_tasks(session_id)`                      |
+| `make_summary` 汇总                 | `AUDITOR_PROMPT` + `make_audit_summary`                    |xxxxxxxxxx # 项目差异文档 — backup → current> 从 `diff/langgraph-agent-v2-main`（备份）到当前项目（修改后）的完整差异。> 另一 AI agent 可据此将备份逐步修改至当前状态。---## 变更总览| 层          | 新增     | 修改      | 删除 || ----------- | -------- | --------- | ---- || 后端 Python | 5 个文件 | 18 个文件 | 0    || 前端 Vue/TS | 2 个文件 | 12 个文件 | 0    || 配置/文档   | 0        | 3 个文件  | 0    |---## 第一部分：后端 Python### 1.1 架构核心重构备份是 **4 阶段过程式流水线**（Plan → Dispatch → Summarize → Metrics），当前是 **3 节点 LangGraph StateGraph**（Supervisor → Execute → Review）。| 维度          | 备份版本                                                     | 当前版本                                                     || ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ || 编排器        | `Orchestrator` 过程式流水线（`planner.py` → `dispatcher.py` → `summarizer.py`） | `Orchestrator` = `StateGraph(GraphState)` 3 节点（`supervisor_node` → `execute_node` → `review_node`） || 计划生成      | `Planner.stream()` 调用 `model.astream()`，产出 `thinking_start/thinking/thinking_done/plan` 事件 | `_supervisor_node_impl()` 调用 `model.ainvoke()`，显式 `yield make_thinking_start/make_thinking/make_thinking_done/make_plan` || 子 Agent 调用 | `LocalDispatcher` / `ACPDispatcher` 接口，各有 `stream()` 方法 | `SubAgentTool(BaseTool)` / `ACPSubAgentTool(BaseTool)`，作为 LangChain Tool 在 `create_react_agent` 中调用 || 审计          | 无（仅 `summarizer.py` 做多步汇总）                          | `_review_node_impl()` 用 `AUDITOR_PROMPT` LLM 审计 + `planner.save_experiences()` 存到 `memory/experiences.md` || 重试          | 无                                                           | `execute_node_impl` 每步 retry 1 次                          || 事件桥接      | 直接 `yield`                                                 | `asyncio.Queue` → `run()` 消费队列                           |### 1.2 逐个文件差异#### 新增文件（备份中没有）| 文件                              | 行数 | 说明                                                  || --------------------------------- | ---- | ----------------------------------------------------- || `src/agent/orchestrator/tools.py` | 123  | `SubAgentTool` / `ACPSubAgentTool` 基于 Tool 的包装器 || `src/agent/tools/load_skill.py`   | —    | 按需加载 skill 的工具                                 || `tests/test_abort.py`             | —    | 中止/取消测试                                         || `tests/test_acp_tools.py`         | —    | ACP 工具集成测试                                      |#### 修改文件##### `src/agent/orchestrator/core.py` — **完全重写****备份** (227 行): 过程式 `stream()` → `Planner.stream()` plan → `make_dispatcher()` dispatch → `summarize_stream()` summary**当前** (395 行，+168): 3 节点 StateGraph```pythonclass GraphState(TypedDict):    messages: list[BaseMessage]    plan_text: str    steps: list[dict]    results: list[dict]    errors: list[dict]    review: strgraph = StateGraph(GraphState)graph.add_node("supervisor", supervisor_node)graph.add_node("execute", execute_node)graph.add_node("review", review_node)graph.add_edge("supervisor", "execute")graph.add_edge("execute", "review")graph.add_conditional_edges("review", lambda s: "end" if s.get("review") else "execute")```关键函数：- `_supervisor_node_impl()` — `model.ainvoke()`，产出 thinking_start/thinking/thinking_done/plan 事件- `_parse_plan(text)` — 正则 `r"^\s*[-*]\s*(\w+)\s*[:：]\s*(.+)"` 解析 plan- `_execute_node_impl(state)` — 逐个执行 steps，dispatch SubAgentTool/ACPSubAgentTool，track running tools，push task_update- `_review_node_impl(state)` — `AUDITOR_PROMPT` + model.ainvoke()，存 experiences，push audit_summary- `run(task, history, summary)` — 消费 asyncio.Queue，yield 事件##### `src/agent/orchestrator/planner.py` — **简化****备份** (195 行): `_build_prompt()` + `stream()` + `parse_plan()` 全部在 Planner 类中**当前** (103 行，-92): 仅保留 `load_experiences()` / `save_experiences()` / `build_agent_descriptions()` / `_convert_history()`计划生成已移至 `core.py` 的 `_supervisor_node_impl()`。##### `src/agent/orchestrator/_events.py` — +1 行添加 `make_audit_summary` 和 `EventType` 导入。##### `src/agent/orchestrator/dispatcher.py` — **增强****备份** (205 行): 基础版本**当前** (238 行，+33):- `LocalDispatcher.stream()`: 添加 `recursion_limit=200`、`try/except` 错误处理- `ACPDispatcher.stream()`: 添加连接时间测量、"正在连接..." thinking 事件、agent_id 查找回退、`previous_results → context`##### `src/agent/events.py` — +审计事件- 添加 `AUDIT_SUMMARY: Final[str] = "audit_summary"` 事件类型- 添加 `make_audit_summary(agent_name, data)` 工厂函数- events 架构表新增 `audit_summary` 行- `EventType` enum 包含 `AUDIT_SUMMARY`##### `src/agent/prompts/system_prompt.py` — **提示词重构****备份**: `SUPERVISOR_PROMPT`（硬编码 agent 列表）+ `SUPERVISOR_PROMPT_TEMPLATE`**当前**:- `SUPERVISOR_PLAN_PROMPT` — 使用 `{agent_descriptions}` + `{experiences}` 占位符，`{{task}}`（转义），语言无关响应- `EXECUTE_PLAN_PROMPT` (新增) — 执行计划提示词- `AUDITOR_PROMPT` (新增，中文) — 审计提示词，要求用中文输出结构化审计报告（总结/各 Agent 结果/问题与经验/对未来会话建议）##### `src/agent/agent/core.py` — **惰性加载重构****备份**: `__init__` 中急切初始化 `self.tools = TOOLS`, `self.compressor`, `self.agent_graph`**当前**: 惰性加载- `self._tools = None` → `_ensure_tools()` 首次调用时 `get_tools()`- `self._prompt = None` → `_ensure_prompt()` 首次调用时格式化 SYSTEM_PROMPT- `self._graph = None` → `_ensure_graph()` 首次调用时 `create_agent()`- 导入从 `from src.agent.tools import TOOLS` 改为 `from src.agent.tools import get_tools`##### `src/agent/tools/__init__.py` — **热重载****备份**: 静态 `TOOLS = _load_tools_from_config()`**当前**: `get_tools()` 每次通过 ConfigManager 惰性读取（支持热重载）；`TOOLS = get_tools()` 变为函数调用别名##### `src/agent/models.py` — +日志添加 `import logging`、`logger = logging.getLogger(__name__)`、`[LLM MODEL]` 日志##### `src/agent/skills.py` — **输出格式变更****备份**: 输出完整 skill 内容 `## {name}\n{content}`**当前**: 输出 `[Available Skills]` 摘要列表 `- {name}: {description}`，指示 LLM 使用 `load_skill` 工具按需加载；支持按 `agent_id` 过滤##### `src/agent/acp_agent.py` — +权限 +thinking_start- 添加 `resolve_permission(self, req_id, option_id)` 方法- ACP run 开始时先 yield `thinking_start` 事件- 处理 `permission_request` 事件（添加 agent_id 后 yield）- +15 行（193 vs 178）##### `src/agent/acp_client.py` — +permission_request- `AgentEvent` 的 `type` docstring 添加 `"permission_request"`- `_map_acp_event()` 添加 `elif event.type == "permission_request":` 映射##### `src/agent/acp/client.py` — **大幅扩展****备份** (385 行): 基础 ACP 客户端**当前** (648 行，+263):- `__init__` 添加 `cwd` 参数、`_pending_permissions` dict- 添加 `_send_response()` / `_log_notification()` / `load_session()` / `create_session()`- `prompt()` 重写：5s 轮询、last_event_time、permission_request 处理、空闲检测、try/except TimeoutError + CancelledError- 新增 `_execute_tool()` → `_tool_read()` / `_tool_write()` / `_tool_edit()` / `_tool_bash()` / `_tool_glob()` / `_tool_grep()`- `_parse_notification()` 扩展：`tool_call` 拆分为 `tool_call` + `tool_call_update`（in_progress/completed/failed）- 添加 `resolve_permission()`##### `src/agent/db/__init__.py` — +reconcile_session_tasks导出 `reconcile_session_tasks`（来自 `db/tasks`）##### `src/agent/db/tasks.py` — +reconcile_session_tasks新增 `reconcile_session_tasks(session_id)` 函数，将 session 中 `running`/`pending` 任务标记为 `failed`（用于会话恢复）##### `server.py` — +权限端点 +finally 协调**备份** (1123 行) **当前** (1160 行)：| 差异                                | 说明                                                         || ----------------------------------- | ------------------------------------------------------------ || 导入                                | 新增 `reconcile_session_tasks` 导入                          || `PermissionResponseRequest`         | 新增 Pydantic model                                          || `POST /chat` finally                | 新增 `if not _saved` 保存 + `reconcile_session_tasks(session_id)` || `GET /chat/stream` finally          | 新增 `if not _saved` 保存 + `reconcile_session_tasks(sid)`   || `POST /api/orchestrate` finally     | 新增 `_save_accumulated()` + `reconcile_session_tasks(session_id)` || `POST /api/acp/permission-response` | **新增端点** — 解析 ACP 权限请求                             |##### `tests/test_supervisor.py` — **完全重写****备份** (347 行): Mock `model.astream()`，测试 Planner + Dispatcher 路径**当前** (414 行，+67): Mock `model.ainvoke()` + StateGraph 模拟- `_make_chunk` 使用 `MagicMock(spec=object)`（仅 content，无 additional_kwargs）- `_make_model_response()` 同步返回 mock- 测试: `test_run_produces_plan_audit_metrics_done`、`test_events_in_correct_order`（plan → audit_summary）、`test_execute_node_retries_on_error`、`test_execute_node_skips_unknown_agent`、`test_audit_summary_contains_results`、`test_planner_builds_agent_descriptions`、`test_planner_converts_history`、`test_run_acp_agent_dispatch`---## 第二部分：前端 Vue/TS### 2.1 架构区别备份使用**索引字典 + 辅助函数**管理消息槽；当前使用**统一的 `ensureAssistant(agentName)`**，按 agentName 从后向前扫描复用消息。| 维度       | 备份版本                                                     | 当前版本                                           || ---------- | ------------------------------------------------------------ | -------------------------------------------------- || 消息槽定位 | `ensureAgentMsg(agentName)` + `ensureSupervisorMsg()` + 两套索引 | 统一 `msg.ensureAssistant(agentName)`              || 事件流     | `pushPlan()` 创建新 div                                      | `plan` 写入已有 supervisor div                     || 审计摘要   | 无                                                           | `audit_summary` 事件 + `setAuditSummary()`         || 权限对话框 | 无                                                           | `PermissionDialog.vue` + `permission_request` 事件 || 测试框架   | 无 vitest                                                    | `vitest` + 2 个测试文件（11 个测试）               |### 2.2 逐个文件差异#### 新增文件（备份中没有）| 文件                                     | 说明                               || ---------------------------------------- | ---------------------------------- || `ui/src/components/PermissionDialog.vue` | ACP 权限请求对话框（固定全屏浮层） || `ui/src/utils/api/sse.test.ts`           | SSE 流处理单元测试                 |#### 修改文件##### `ui/src/utils/streamManager.ts` — **重大重构****备份**: 使用 `supervisorMsgIdx` + `agentMsgIndices` 两套索引；`plan` → `pushPlan()` 创建新 div**当前**: 统一 `msg.ensureAssistant(agentName)`具体差异：- **导入**: 新增 `PermissionRequest` 类型引入- **状态**: 新增 `permissionRequest` ref；移除 `_lastAgent`- **`_setSessionStatus`**: 新增 session 不在本地列表时 `unshift` 创建- **`sendOrchestrate`**:  - 移除 `supervisorMsgIdx` / `agentMsgIndices` / `ensureSupervisorMsg` / `ensureAgentMsg`  - 所有事件用 `msg.ensureAssistant(agentName)` 获取消息索引  - `plan` 事件：`msg.ensureAssistant('supervisor')` → 直接设 `content=planText` + 清 thinking + 停 typewriter（不再调用 `pushPlan`）  - `tool_call` 事件：新增 result/completed 分支（标记 pending/running → done + `clearCompletedToolCalls()`）  - `message` 事件：用 `_enqueueStep` + `appendContent`（备份为直接 `setContent`）  - `task_update` 事件：用 `msg.ensureAssistant(update.agent)` 替代 `agentMsgIndices`  - 新增 `audit_summary` 事件处理  - 新增 `permission_request` 事件处理  - finally 块：迭代所有 assistant 消息标记 done（备份用 `agentMsgIndices` 字典）- **`sendACP`**: 添加 `_appendLog` 调试日志、`permission_request` 处理、finally 块清理 `permissionRequest`- **`abort`**: 保留 `msg.reconcileStreamEnd()` 调用- **`send`**: 移除 `_lastAgent` 逻辑- 返回对象新增 `permissionRequest`##### `ui/src/utils/messageManager.ts`- 新增 `auditSummary` ref + `setAuditSummary(text)` + `clearCompletedToolCalls()`- `setMetrics()` 改为增量合并 tokens（`{ ...prev.tokens, ...data.tokens }`）- `clear()` / `resetTaskItems()` 新增 `auditSummary.value = null`- `reconcileStreamEnd()` 新增 toolCalls 清理逻辑（pending/running → done + `clearCompletedToolCalls()`）##### `ui/src/stores/chat.ts`- Pinia store 暴露新增 `auditSummary: msg.auditSummary`、`permissionRequest: stream.permissionRequest`##### `ui/src/components/ChatTab.vue`- **导入**: 新增 `PermissionDialog` 导入- **消息过滤条件**: `msg.content || msg.toolCalls?.length || msg.thinking || msg.isThinking`- **模板**: 新增 `<PermissionDialog>` 区块（`.input-zone` 之上）- **`.input-zone`**: `InputBar` 传递 `permissionPending` prop- **样式**: 保留 `.input-zone` CSS##### `ui/src/components/InputBar.vue`- **Props**: 新增 `permissionPending?: boolean`- **模板**: input 添加 `:disabled="permissionPending"`；占位符根据 `permissionPending` 切换##### `ui/src/components/TopologyBar.vue`- `agentLabel` computed 恢复（从 `chat.taskItems` 取第一个非 supervisor 的 agent 名称）- `watch(supState)` 恢复完整逻辑##### `ui/src/components/ThinkingPanel.vue`- `activeAgent` computed 恢复（取最后一条 thinking 数据块的 agent）- 模板标题用 `activeAgent` 而非硬编码##### `ui/src/components/MonitorPanel.vue`- 导入恢复 `useSessionsStore`- 计时器用 `watch(sessionsStore.activeSessionId)` 而非固定时间- 模板恢复审计摘要区块（`chat.auditSummary`）##### `ui/src/components/ToolCallBlock.vue`- `toolIcon` 图标映射不同- CSS 差异：`.tool-call-block` 从 `margin: 3px 0 3px 38px` → `width: 100%` / `margin-left: 0`；紫色主题 → 默认主题##### `ui/src/components/message/AgentMessage.vue`- 工具调用状态: `tc.status || (isTyping && j === msg.toolCalls!.length - 1 ? 'running' : 'done')`（备份为 `!isTyping ? 'done' : ...`）- `.tool-calls` CSS 恢复 `width: 100%` + `align-items: flex-start`##### `ui/src/utils/api/types.ts`- 新增 `PermissionRequest` 接口定义（`req_id`, `session_id`, `toolCall`, `options`）##### `ui/package.json`- **scripts**: 新增 `"test": "vitest run"`、`"test:watch": "vitest"`- **devDependencies**: 新增 `"vitest": "^4.1.8"`##### `ui/vite.config.ts`- 新增 `/// <reference types="vitest" />` 指令- 新增 `test` 配置块（`environment: 'node'`, `include: ['src/**/*.test.ts']`）---## 第三部分：配置/文档| 文件                 | 差异                                                         || -------------------- | ------------------------------------------------------------ || `config/agents.json` | 3 处 desc 中文润色（direct/opencode/claude）；`load_skill` 工具条目存在于当前、不在备份 || `config/tools.json`  | 当前版本包含 `load_skill` 工具配置；备份中无                 || `AGENTS.md`          | 备份已精简：去掉副标题、删命令行、更新测试计数 55→69、删 StateGraph gotchas 6 条、删 ACP anti-pattern 整节 |---## 第四部分：恢复步骤（备份 → 当前）### 4.1 后端 Python```bash# 1. 新增文件# src/agent/orchestrator/tools.py#   → SubAgentTool(BaseTool), ACPSubAgentTool(BaseTool)#   → 使用 create_react_agent 构建 sub-agent，dispatch ACP 时用 get_acp_agent()## src/agent/tools/load_skill.py#   → load_skill tool，通过 ConfigManager 读取 skill 内容# 2. 替换文件# src/agent/orchestrator/core.py#   → 备份的流水线替换为 3 节点 StateGraph#   → 添加 _supervisor_node_impl / _execute_node_impl / _review_node_impl#   → 添加 _parse_plan() 正则解析#   → run() 改为 asyncio.Queue + graph.ainvoke()## src/agent/orchestrator/planner.py#   → 删除 _build_prompt(), stream(), parse_plan()#   → 保留 load_experiences(), save_experiences(), build_agent_descriptions(), _convert_history()## src/agent/orchestrator/_events.py#   → 添加 make_audit_summary 导入## src/agent/orchestrator/dispatcher.py#   → LocalDispatcher: 添加 recursion_limit=200 + try/except#   → ACPDispatcher: 添加连接时间 + "正在连接..." event + agent_id 回退## src/agent/events.py#   → 添加 AUDIT_SUMMARY 事件类型 + make_audit_summary()#   → EventType 包含 AUDIT_SUMMARY## src/agent/prompts/system_prompt.py#   → 备份的 SUPERVISOR_PROMPT + SUPERVISOR_PROMPT_TEMPLATE#   → 替换为 SUPERVISOR_PLAN_PROMPT + EXECUTE_PLAN_PROMPT + AUDITOR_PROMPT(中文)## src/agent/agent/core.py#   → 急切初始化 → 惰性加载（_ensure_tools/_ensure_prompt/_ensure_graph）#   → TOOLS → get_tools()## src/agent/tools/__init__.py#   → 静态 TOOLS → 函数 get_tools()（ConfigManager 惰性读取）## src/agent/skills.py#   → get_skills_prompt() 输出格式改为 [Available Skills] 摘要## src/agent/acp_agent.py#   → 添加 resolve_permission()#   → 添加 thinking_start 事件#   → 处理 permisson_request## src/agent/acp_client.py#   → AgentEvent type 添加 "permission_request"#   → _map_acp_event() 添加映射## src/agent/acp/client.py#   → 大幅扩展：_send_response, _log_notification, load_session#   → prompt() 重写：5s 轮询, permission_request 处理#   → 新增 _execute_tool + 6 个工具方法#   → _parse_notification 扩展#   → resolve_permission()## src/agent/db/__init__.py#   → 导出 reconcile_session_tasks## src/agent/db/tasks.py#   → 添加 reconcile_session_tasks()## server.py#   → 导入 reconcile_session_tasks#   → 添加 PermissionResponseRequest#   → 3 个 SSE 端点 finally 块添加 reconcile_session_tasks()#   → 添加 POST /api/acp/permission-response 端点## tests/test_supervisor.py#   → 完全替换：mock model.ainvoke() + StateGraph 测试```### 4.2 前端 Vue/TS```bash# 1. 新增文件# ui/src/components/PermissionDialog.vue# ui/src/utils/api/sse.test.ts# 2. 替换文件# ui/src/utils/streamManager.ts#   → 删除: supervisorMsgIdx, agentMsgIndices, ensureSupervisorMsg(), ensureAgentMsg()#   → 修改: 所有事件 handler 用 msg.ensureAssistant(agentName)#   → plan handler: 删 pushPlan() → msg.ensureAssistant('supervisor') + 设 content + 停 typewriter#   → tool_call handler: 添加 result/completed 分支 + clearCompletedToolCalls()#   → message handler: _enqueueStep + appendContent#   → task_update handler: msg.ensureAssistant(update.agent)#   → 新增: audit_summary / permission_request 事件处理#   → finally: 迭代所有 assistant 消息#   → sendACP: 添加 _appendLog / permission_request / finally 清理#   → abort: 保留 reconcileStreamEnd()#   → 返回: 添加 permissionRequest## ui/src/utils/messageManager.ts#   → 添加 auditSummary ref + setAuditSummary() + clearCompletedToolCalls()#   → setMetrics() 增量合并 tokens#   → reconcileStreamEnd() 添加 toolCalls 清理## ui/src/stores/chat.ts#   → 添加 auditSummary / permissionRequest 暴露## ui/src/components/ChatTab.vue#   → 消息过滤: 恢复 thinking/isThinking 条件#   → 模板: 添加 PermissionDialog#   → input-zone: 恢复 .input-zone div + permissionPending prop## ui/src/components/InputBar.vue#   → 添加 permissionPending prop + 禁用/占位符逻辑## ui/src/components/MonitorPanel.vue#   → 恢复 sessionsStore 导入 + watch 计时器#   → 恢复 auditSummary 区块## ui/src/components/ToolCallBlock.vue#   → 回退 margin 到 0 / width 100%#   → 默认主题（非紫色）## ui/src/components/message/AgentMessage.vue#   → tool_call status 逻辑回退#   → .tool-calls CSS 恢复 width 100%## ui/src/utils/api/types.ts#   → 添加 PermissionRequest 接口## ui/package.json#   → 添加 vitest devDependency + test scripts## ui/vite.config.ts#   → 添加 vitest reference + test 配置# 3. 配置# config/agents.json: 添加 load_skill 工具引用（可选）# config/tools.json: 添加 load_skill 工具配置```### 4.3 验证```bash# 后端cd <project_root>pytest tests/test_supervisor.py -v            # 20 testsruff check .                                  # 仅预存 E501# 前端cd uinpm install                                    # 安装 vitestnpx vitest run                                 # 11 testsnpx vue-tsc --noEmit                           # type-check clean```---## 附录：关键差异速查表| 备份中的写法                        | 当前写法                                                   || ----------------------------------- | ---------------------------------------------------------- || `ensureAgentMsg(name)`              | `msg.ensureAssistant(name)`                                || `ensureSupervisorMsg()`             | `msg.ensureAssistant('supervisor')`                        || `msg.pushPlan(planText)`            | `msg.ensureAssistant('supervisor')` + `content = planText` || `agentMsgIndices[name]`             | `msg.ensureAssistant(name)`                                || `supervisorMsgIdx`                  | 删除，统一用 `msg.ensureAssistant('supervisor')`           || `audit_summary` 不处理              | `msg.setAuditSummary(data)`                                || `permission_request` 不处理         | `permissionRequest.value = data`                           || `from src.agent.tools import TOOLS` | `from src.agent.tools import get_tools`                    || 静态 `TOOLS`                        | 函数 `get_tools()` 热重载                                  || `model.astream()` plan              | `model.ainvoke()` plan                                     || `LocalDispatcher.stream()`          | `SubAgentTool._arun()`                                     || 无 reconcile                        | `reconcile_session_tasks(session_id)`                      || `make_summary` 汇总                 | `AUDITOR_PROMPT` + `make_audit_summary`                    |bash

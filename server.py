@@ -26,11 +26,14 @@ from src.agent.db import (
     delete_session,
     delete_task_updates_for_sessions,
     get_session_summary,
+    get_audit_summary,
+    save_audit_summary,
     get_tool_usage_stats,
     load_history,
     load_history_with_meta,
     load_metrics,
     load_task_updates,
+    reconcile_session_tasks,
     rename_session,
     save_message,
     save_metrics,
@@ -120,6 +123,11 @@ class MemoryQueryRequest(BaseModel):
     query: str
     namespace: str = "default"
     top_k: int = 5
+
+
+class PermissionResponseRequest(BaseModel):
+    req_id: str
+    option_id: str
 
 
 class CompactRequest(BaseModel):
@@ -253,6 +261,7 @@ async def chat(request: ChatRequest):
         agent_name = ""
         _saved = False
         _sse_idx = 0
+        _metrics_data = None
         try:
             async for event in _passthrough(get_agent().run(request.message, memory_context, history, summary=session_summary)):
                 event["session_id"] = session_id
@@ -266,6 +275,8 @@ async def chat(request: ChatRequest):
                     assistant_content += event.get("data", "")
                     agent_name = event.get("agent_name", "") or agent_name
                     logger.info("[CHAT] #%d message: accumulated=%d agent=%s", _sse_idx, len(assistant_content), agent_name)
+                elif event["type"] == "metrics":
+                    _metrics_data = event.get("data", {})
                 payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 logger.info("[SSE-TRACE] %s POST-stream #%d: type=%s bytes=%d", f"{time.time():.3f}", _sse_idx, event["type"], len(payload))
                 yield payload
@@ -288,7 +299,19 @@ async def chat(request: ChatRequest):
             error_payload = f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
             yield error_payload
         finally:
+            if not _saved:
+                try:
+                    content = assistant_content or request.message
+                    save_turn(session_id, request.message, content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
+                except Exception as save_err:
+                    logger.error("[CHAT] POST-stream finally save error: %s", save_err)
+            reconcile_session_tasks(session_id)
             duration_ms = int((time.time() - _start_time) * 1000)
+            try:
+                metrics = _metrics_data or {"elapsed_ms": duration_ms, "agent_calls": 0, "tokens": {}}
+                save_metrics(session_id, json.dumps(metrics, ensure_ascii=False))
+            except Exception as save_err:
+                logger.warning("[CHAT] save_metrics failed: %s", save_err)
             update_session_status(session_id, "completed")
             update_session_duration(session_id, duration_ms)
             logger.info("[CHAT] session=%s completed: %d events, %dms, thinking=%d chars", session_id, _sse_idx, duration_ms, len(thinking_content))
@@ -322,6 +345,7 @@ async def chat_stream(message: str = Query(...), session_id: str | None = Query(
         tool_calls_data = ""
         _saved = False
         _sse_idx = 0
+        _metrics_data = None
         try:
             async for event in _passthrough(get_agent().run(message, memory_context, history, summary=session_summary)):
                 event["session_id"] = sid
@@ -334,6 +358,8 @@ async def chat_stream(message: str = Query(...), session_id: str | None = Query(
                 elif event["type"] == "message":
                     assistant_content += event.get("data", "")
                     logger.info("[CHAT] #%d message: accumulated=%d", _sse_idx, len(assistant_content))
+                elif event["type"] == "metrics":
+                    _metrics_data = event.get("data", {})
                 logger.info("[SSE-TRACE] %s GET-stream #%d: type=%s", f"{time.time():.3f}", _sse_idx, event["type"])
                 yield {"event": event["type"], "data": json.dumps(event, ensure_ascii=False)}
 
@@ -353,7 +379,19 @@ async def chat_stream(message: str = Query(...), session_id: str | None = Query(
                     logger.error("[CHAT] failed to save on error: %s", save_err)
             yield {"event": "error", "data": json.dumps({"type": "error", "data": str(e), "session_id": sid}, ensure_ascii=False)}
         finally:
+            if not _saved:
+                try:
+                    content = assistant_content or message
+                    save_turn(sid, message, content, thinking=thinking_content, tool_calls=tool_calls_data)
+                except Exception as save_err:
+                    logger.error("[CHAT] GET-stream finally save error: %s", save_err)
+            reconcile_session_tasks(sid)
             duration_ms = int((time.time() - _start_time) * 1000)
+            try:
+                metrics = _metrics_data or {"elapsed_ms": duration_ms, "agent_calls": 0, "tokens": {}}
+                save_metrics(sid, json.dumps(metrics, ensure_ascii=False))
+            except Exception as save_err:
+                logger.warning("[CHAT] GET save_metrics failed: %s", save_err)
             update_session_status(sid, "completed")
             update_session_duration(sid, duration_ms)
             logger.info("[CHAT] session=%s completed: %d events, %dms, thinking=%d chars", sid, _sse_idx, duration_ms, len(thinking_content))
@@ -457,6 +495,11 @@ async def orchestrate(request: OrchestrateRequest):
                             )
                         except Exception as save_err:
                             logger.warning("[ORCH] save summary failed: %s", save_err)
+                    elif etype == "audit_summary":
+                        try:
+                            save_audit_summary(session_id, event.get("data", "") or "")
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save_audit_summary failed: %s", save_err)
                     elif etype == "metrics":
                         try:
                             save_metrics(session_id, json.dumps(event.get("data", {}), ensure_ascii=False))
@@ -475,6 +518,8 @@ async def orchestrate(request: OrchestrateRequest):
             _save_accumulated()
             yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
         finally:
+            _save_accumulated()
+            reconcile_session_tasks(session_id)
             duration_ms = int((time.time() - _start_time) * 1000)
             update_session_status(session_id, "completed")
             update_session_duration(session_id, duration_ms)
@@ -485,6 +530,23 @@ async def orchestrate(request: OrchestrateRequest):
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
+
+
+# ── Permission Response ─────────────────────────────────────────
+
+
+@app.post("/api/acp/permission-response")
+async def acp_permission_response(request: PermissionResponseRequest):
+    from src.agent.acp_agent import get_acp_agent
+
+    for agent in get_acp_agent._acp_agents.values():
+        if agent._client and agent._client._native:
+            try:
+                await agent._client._native.resolve_permission(request.req_id, request.option_id)
+                return {"status": "ok"}
+            except Exception:
+                continue
+    raise HTTPException(status_code=404, detail="No active ACP agent found for permission request")
 
 
 # ── SSE Events (handled per-endpoint: /chat, /api/orchestrate, /api/acp/send) ──
@@ -518,6 +580,7 @@ async def get_session(session_id: str):
     summary = get_session_summary(session_id)
     task_updates = load_task_updates(session_id)
     metrics = load_metrics(session_id)
+    audit_summary = get_audit_summary(session_id)
     if not messages and not summary:
         raise HTTPException(status_code=404, detail="Session not found")
     return {
@@ -527,6 +590,7 @@ async def get_session(session_id: str):
         "task_updates": task_updates,
         "task_phases": [],
         "metrics": metrics,
+        "audit_summary": audit_summary,
     }
 
 
@@ -674,6 +738,7 @@ async def acp_send_message(request: dict):
         thinking_content = ""
         message_content = ""
         _user_saved = False
+        _metrics_data = None
         try:
             async for event in _passthrough(acp.run(message, context=context, session_id=session_id)):
                 if session_id:
@@ -701,6 +766,8 @@ async def acp_send_message(request: dict):
                             save_message(session_id, "ai", message_content, thinking=thinking_content, name=agent_id)
                             message_content = ""
                             thinking_content = ""
+                        elif event["type"] == "metrics":
+                            _metrics_data = event.get("data", {})
                     except Exception as save_err:
                         logger.warning("[ACP] save_message failed: %s", save_err)
 
@@ -721,6 +788,12 @@ async def acp_send_message(request: dict):
                     except Exception as save_err:
                         logger.warning("[ACP] final save_message failed: %s", save_err)
                 duration_ms = int((time.time() - _start_time) * 1000)
+                try:
+                    metrics = _metrics_data or {"elapsed_ms": duration_ms, "agent_calls": 0, "tokens": {}}
+                    if session_id:
+                        save_metrics(session_id, json.dumps(metrics, ensure_ascii=False))
+                except Exception as save_err:
+                    logger.warning("[ACP] save_metrics failed: %s", save_err)
                 update_session_status(session_id, "completed")
                 update_session_duration(session_id, duration_ms)
                 logger.info("[ACP] session=%s completed: %dms", session_id, duration_ms)

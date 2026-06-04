@@ -29,7 +29,6 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from langchain.agents import create_agent
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 
@@ -48,7 +47,7 @@ from src.agent.orchestrator._events import (
     make_thinking_start,
     make_tool_call,
 )
-from src.agent.tools import TOOLS
+from src.agent.tools import get_tools
 
 logger = logging.getLogger(__name__)
 
@@ -85,25 +84,48 @@ class Agent:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self.model = resolve_model(config)
-        self.tools = TOOLS
+        self._tools: list | None = None
+        self._prompt: str | None = None
+        self._graph: Any | None = None
         self.compressor = ContextCompressor(config)
-        self.agent_graph = create_agent(
-            self.model,
-            tools=self.tools,
-            system_prompt=self._get_system_prompt(),
-        )
 
-    # ── Prompt 构建 ──────────────────────────────────────────
+    # ── 惰性加载 ─────────────────────────────────────────────
 
-    def _get_system_prompt(self) -> str:
-        from src.agent.prompts.system_prompt import SYSTEM_PROMPT
-        from src.agent.skills import get_skills_prompt
+    def _ensure_tools(self) -> list:
+        if self._tools is None:
+            self._tools = get_tools()
+        return self._tools
 
-        skills_prompt = get_skills_prompt()
-        return SYSTEM_PROMPT.format(
-            skills=f"\n\n{skills_prompt}" if skills_prompt else "",
-            memory_context="",
-        )
+    def _ensure_prompt(self) -> str:
+        if self._prompt is None:
+            from src.agent.prompts.system_prompt import SYSTEM_PROMPT
+            from src.agent.skills import get_skills_prompt
+
+            skills_prompt = get_skills_prompt()
+            self._prompt = SYSTEM_PROMPT.format(
+                skills=f"\n\n{skills_prompt}" if skills_prompt else "",
+                memory_context="",
+            )
+        return self._prompt
+
+    def _ensure_graph(self):
+        if self._graph is None:
+            from langchain.agents import create_agent
+
+            self._graph = create_agent(
+                self.model,
+                tools=self._ensure_tools(),
+                system_prompt=self._ensure_prompt(),
+            )
+        return self._graph
+
+    @property
+    def tools(self) -> list:
+        return self._ensure_tools()
+
+    @property
+    def agent_graph(self):
+        return self._ensure_graph()
 
     def _build_messages(
         self,

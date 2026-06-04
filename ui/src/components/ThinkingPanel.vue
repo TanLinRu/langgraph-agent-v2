@@ -50,6 +50,13 @@ const props = defineProps<{
 
 const expanded = ref(true)
 
+const activeAgent = computed(() => {
+  const cs = props.chunks
+  if (!cs.length) return 'supervisor'
+  const last = cs[cs.length - 1]
+  return last.agentName || 'supervisor'
+})
+
 const groupedChunks = computed(() => {
   const groups: Array<{ agent: string; chunks: string[] }> = []
   for (const chunk of props.chunks) {
@@ -84,9 +91,9 @@ function elapsedStr(): string {
     <!-- Expanded panel -->
     <template v-else>
       <div class="thinking-panel-header" @click="expanded = !expanded">
-        <ConvAvatar type="supervisor" :size="24" />
+        <ConvAvatar :type="activeAgent" :size="24" />
         <span class="thinking-panel-header-label">
-          Supervisor · <template v-if="isThinking">思考中<span class="thinking-dots"><span></span><span></span><span></span></span></template><template v-else>已推理</template>
+          {{ activeAgent === 'supervisor' ? 'Supervisor' : activeAgent }} · <template v-if="isThinking">思考中<span class="thinking-dots"><span></span><span></span><span></span></span></template><template v-else>已推理</template>
         </span>
         <span class="thinking-panel-header-meta">{{ stepCount }} 步 · {{ elapsedStr() }}</span>
         <span :class="['thinking-panel-header-arrow', { open: expanded }]">▾</span>

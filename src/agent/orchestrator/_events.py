@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from src.agent.events import (  # noqa: F401  (re-export)
     EventType,
+    make_audit_summary,
     make_done,
     make_error,
     make_event,

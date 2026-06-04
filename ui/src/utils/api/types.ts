@@ -147,6 +147,15 @@ export interface SessionInfo {
   project_path: string
 }
 
+/** 权限请求 (来自 ACP agent) */
+export interface PermissionRequest {
+  req_id: string
+  session_id?: string
+  toolCall: { name: string; args: Record<string, unknown> }
+  options: Array<{ id: string; label: string; description?: string }>
+  agent_id?: string
+}
+
 /** 文件浏览器节点 */
 export interface BrowseNode {
   path: string

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentEvent:
     """Normalized event from external agent."""
-    type: str  # "thinking" | "tool_call" | "message" | "metrics" | "plan" | "error" | "done"
+    type: str  # "thinking" | "tool_call" | "message" | "metrics" | "plan" | "error" | "done" | "permission_request"
     data: Any = None
     agent_name: str = ""
     session_id: str = ""
@@ -129,6 +129,8 @@ class ACPClient:
             return AgentEvent(type="metrics", data=event.data, session_id=event.session_id)
         elif event.type == "plan":
             return AgentEvent(type="plan", data=event.data, session_id=event.session_id)
+        elif event.type == "permission_request":
+            return AgentEvent(type="permission_request", data=event.data, session_id=event.session_id)
         elif event.type == "error":
             return AgentEvent(type="error", data=event.data, session_id=event.session_id)
         return None
