@@ -225,9 +225,16 @@ def make_permission_request(agent_name: str | None = None, data: dict | None = N
     return make_event(EventType.PERMISSION_REQUEST, agent_name=agent_name, data=data)
 
 
-def make_audit_summary(agent_name: str, data: str) -> dict[str, Any]:
-    """构造 ``audit_summary`` 事件,``data`` 是审计报告文本。"""
-    return make_event(EventType.AUDIT_SUMMARY, agent_name=agent_name, data=data)
+def make_audit_summary(agent_name: str, data: str, agent_outputs: dict[str, str] | None = None) -> dict[str, Any]:
+    """构造 ``audit_summary`` 事件。
+
+    - ``data``: 审计报告文本 (兼容前端,保持 string)
+    - ``agent_outputs``: 可选,所有 agent 的原始输出,作为顶层字段透传。
+    """
+    event = make_event(EventType.AUDIT_SUMMARY, agent_name=agent_name, data=data)
+    if agent_outputs:
+        event["agent_outputs"] = agent_outputs
+    return event
 
 
 def make_summary(agent_name: str, summary_text: str) -> dict[str, Any]:

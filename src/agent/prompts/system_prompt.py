@@ -55,7 +55,16 @@ Rules:
 - Check existing context before planning file reads
 - Keep the plan minimal — only necessary steps
 - Each subtask description must be clear and specific about what output is expected (e.g., "List top 5 models with features", not just "Research models")
-- IMPORTANT: Sub-agents are instructed to execute immediately without repeating instructions. Write subtask descriptions as direct commands, not questions."""
+- IMPORTANT: Sub-agents are instructed to execute immediately without repeating instructions. Write subtask descriptions as direct commands, not questions.
+
+For comparison / technical evaluation tasks, ALL comparison reports MUST include:
+  1. GitHub Stars or adoption metrics (quantitative evidence)
+  2. Architecture paradigm comparison (e.g., DAG vs chain vs single-agent)
+  3. Integration feasibility with the current project
+  4. Source attribution for all data points
+  5. A verifier step (agent="verifier") after research steps to fact-check claims before final output
+
+Each agent's task description must specify exactly what output format is expected (e.g., "Output a markdown table with columns: Name, GitHub Stars, Architecture, Strengths, Weaknesses")."""
 
 EXECUTE_PLAN_PROMPT = """You are a specialized agent executing a subtask.
 

@@ -399,7 +399,8 @@ class Orchestrator:
             "ms": prev.get("ms", 0) + int((time.time() - node_start) * 1000),
         }
 
-        await self.queue.put(make_audit_summary("supervisor", review_text))
+        agent_outputs = {r.agent: r.result for r in results.values()}
+        await self.queue.put(make_audit_summary("supervisor", review_text, agent_outputs=agent_outputs))
 
         review_lower = review_text.lower()
         if "reject" in review_lower:
