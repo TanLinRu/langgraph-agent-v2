@@ -49,9 +49,13 @@ class SubAgentTool(BaseTool):
         tool_names = [getattr(t, "__name__", str(t)) for t in agent_tools]
 
         model_name = cfg.get("model", "default")
-        logger.info("[SubAgent] %s request — model=%s tools=%s task=%d chars",
-                     self.agent_id, model_name, tool_names, len(task))
-        logger.debug("[SubAgent] %s task: %.500s", self.agent_id, task)
+        system_prompt = cfg.get("system_prompt", "You are a helpful assistant.")
+        if self.context:
+            system_prompt += f"\n\n[Context]\n{self.context}"
+        logger.info("[SubAgent] %s request — model=%s tools=%s sp=%d task=%d",
+                     self.agent_id, model_name, tool_names, len(system_prompt), len(task))
+        logger.info("[SubAgent] %s system_prompt: %.1000s", self.agent_id, system_prompt)
+        logger.info("[SubAgent] %s task: %.1000s", self.agent_id, task)
 
         agent_model = _models.resolve_model(
             self.config,
@@ -59,9 +63,6 @@ class SubAgentTool(BaseTool):
             temperature=cfg.get("temperature"),
             max_tokens=cfg.get("max_tokens"),
         )
-        system_prompt = cfg.get("system_prompt", "You are a helpful assistant.")
-        if self.context:
-            system_prompt += f"\n\n[Context]\n{self.context}"
 
         graph = create_react_agent(agent_model, tools=agent_tools, system_prompt=system_prompt)
 
@@ -93,7 +94,7 @@ class SubAgentTool(BaseTool):
         result = "".join(content_parts)
         logger.info("[SubAgent] %s response — %d chars in %dms",
                      self.agent_id, len(result), elapsed)
-        logger.debug("[SubAgent] %s response: %.500s", self.agent_id, result)
+        logger.info("[SubAgent] %s response: %.1000s", self.agent_id, result)
         return result
 
     def _resolve_tools(self, cfg: dict) -> list:
@@ -125,7 +126,7 @@ class ACPSubAgentTool(BaseTool):
         from src.agent.acp_agent import get_acp_agent
 
         logger.info("[ACPSubAgent] %s request — task=%d chars", self.acp_cli_id, len(task))
-        logger.debug("[ACPSubAgent] %s task: %.500s", self.acp_cli_id, task)
+        logger.info("[ACPSubAgent] %s task: %.1000s", self.acp_cli_id, task)
 
         acp = get_acp_agent(self.acp_cli_id)
         content_parts: list[str] = []
@@ -141,5 +142,5 @@ class ACPSubAgentTool(BaseTool):
         result = "".join(content_parts)
         logger.info("[ACPSubAgent] %s response — %d chars in %dms",
                      self.acp_cli_id, len(result), elapsed)
-        logger.debug("[ACPSubAgent] %s response: %.500s", self.acp_cli_id, result)
+        logger.info("[ACPSubAgent] %s response: %.1000s", self.acp_cli_id, result)
         return result

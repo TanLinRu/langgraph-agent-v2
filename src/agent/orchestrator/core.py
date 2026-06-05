@@ -159,15 +159,16 @@ class Orchestrator:
 
         node_start = time.time()
         plan_text = ""
-        request_preview = " ".join(str(m.get("content", "")) for m in messages)[:1000]
-        logger.info("[LLM] supervisor plan request: %s", request_preview)
+        for i, m in enumerate(messages):
+            logger.info("[LLM] supervisor plan messages[%d] (%s): %.2000s",
+                         i, m.get("role", "?"), m.get("content", ""))
         async for chunk in self.model.astream(messages):
             reasoning = chunk.additional_kwargs.get("reasoning_content")
             if reasoning:
                 await self.queue.put(make_thinking("supervisor", reasoning))
             if chunk.content:
                 plan_text += chunk.content
-        logger.info("[LLM] supervisor plan response (%d chars): %s", len(plan_text), plan_text[:1000])
+        logger.info("[LLM] supervisor plan response (%d chars): %.2000s", len(plan_text), plan_text)
 
         input_text = " ".join(str(m.get("content", "")) for m in messages)
         prev = self._tokens.get("supervisor", {})
@@ -353,11 +354,11 @@ class Orchestrator:
 
         node_start = time.time()
         review_text = ""
-        logger.info("[LLM] review request: %s", prompt[:1000])
+        logger.info("[LLM] review request: %.2000s", prompt)
         async for chunk in self.model.astream([{"role": "user", "content": prompt}]):
             if chunk.content:
                 review_text += chunk.content
-        logger.info("[LLM] review response (%d chars): %s", len(review_text), review_text[:1000])
+        logger.info("[LLM] review response (%d chars): %.2000s", len(review_text), review_text)
 
         prev = self._tokens.get("review", {})
         self._tokens["review"] = {
@@ -398,11 +399,11 @@ class Orchestrator:
         )
 
         reflect_text = ""
-        logger.info("[LLM] reflect request: %s", prompt[:1000])
+        logger.info("[LLM] reflect request: %.2000s", prompt)
         async for chunk in self.model.astream([{"role": "user", "content": prompt}]):
             if chunk.content:
                 reflect_text += chunk.content
-        logger.info("[LLM] reflect response (%d chars): %s", len(reflect_text), reflect_text[:1000])
+        logger.info("[LLM] reflect response (%d chars): %.2000s", len(reflect_text), reflect_text)
 
         try:
             patterns_data = json.loads(reflect_text)
