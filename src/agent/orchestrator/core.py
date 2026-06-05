@@ -107,17 +107,28 @@ class Orchestrator:
         history = state.history or []
         task = state.task
 
+        parts: list[str] = []
         if history:
-            turns = []
             for msg in history:
                 if isinstance(msg, dict):
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
                     if content:
-                        turns.append(f"[{role}] {content}")
-            summary_text = "\n".join(turns)
-        else:
-            summary_text = f"Task: {task}"
+                        parts.append(f"[{role}] {content}")
+
+        # Append prior-cycle agent results so re-dispatched agents
+        # (after revision) know what was already attempted.
+        if state.results:
+            parts.append("")
+            parts.append("[Previous cycle agent outputs]")
+            for r in state.results.values():
+                label = f"[{r.agent}] task: {r.task}"
+                snippet = (r.result[:1000] + "...") if len(r.result) > 1000 else r.result
+                parts.append(f"{label}\n{snippet}")
+                if r.error:
+                    parts.append(f"  error: {r.error}")
+
+        summary_text = "\n".join(parts) if parts else f"Task: {task}"
 
         await self.queue.put(make_thinking("supervisor", "Context perception complete"))
         await self.queue.put(make_thinking_done("supervisor"))
@@ -238,6 +249,27 @@ class Orchestrator:
         valid_agents = set(self.sub_agents.keys()) | set(self.acp_agents.keys())
         results: dict[str, AgentResult] = {}
         errors: list[str] = []
+        step_map = {s.agent: s for s in tasks}
+
+        def _build_step_context(step: Step) -> str:
+            """Collect upstream dependency results + global history into one context block."""
+            dep_parts: list[str] = []
+            for dep_idx in step.depends_on:
+                dep_name = step_map.get(dep_idx)
+                dep_result = results.get(dep_name) if dep_name else None
+                if dep_result and dep_result.result:
+                    snippet = (dep_result.result[:2000] + "...") if len(dep_result.result) > 2000 else dep_result.result
+                    dep_parts.append(
+                        f"[Upstream: {dep_name}]\n"
+                        f"Task: {dep_result.task}\n"
+                        f"Output:\n{snippet}"
+                    )
+            dep_section = "\n\n".join(dep_parts)
+            if dep_section and history_summary:
+                return f"{history_summary}\n\n--- Dependency Results ---\n{dep_section}"
+            if dep_section:
+                return f"Dependency Results:\n{dep_section}"
+            return history_summary
 
         async def _run_step(step: Step) -> AgentResult:
             agent_name = step.agent
@@ -250,18 +282,19 @@ class Orchestrator:
             )
 
             agent_start = time.time()
+            step_context = _build_step_context(step)
             try:
                 if agent_name in self.acp_agents:
                     tool = ACPSubAgentTool(
                         agent_id=agent_name,
                         acp_cli_id=self.acp_agents[agent_name],
-                        context=history_summary,
+                        context=step_context,
                     )
                 else:
                     tool = SubAgentTool(
                         agent_id=agent_name,
                         config=self.config,
-                        context=history_summary,
+                        context=step_context,
                     )
                 result_text = await tool._arun(step.task)
             except Exception as e:
@@ -307,7 +340,6 @@ class Orchestrator:
             return AgentResult(agent=agent_name, task=step.task, result=result_text, elapsed_ms=elapsed)
 
         # Build DAG from depends_on
-        step_map = {s.agent: s for s in tasks}
         executed: set[str] = set()
         while len(executed) < len(tasks):
             batch = []
@@ -347,7 +379,7 @@ class Orchestrator:
             return {"review_decision": review_decision, "review_feedback": "No results to review"}
 
         results_text = "\n\n".join(
-            f"**{r.agent}** ({r.task}):\n{r.result[:500]}"
+            f"**{r.agent}** ({r.task}):\n{r.result[:2000]}"
             for r in results.values()
         )
         prompt = AUDITOR_PROMPT.format(task=task, results=results_text)
