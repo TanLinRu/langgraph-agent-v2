@@ -84,7 +84,7 @@ class SubAgentTool(BaseTool):
         return "".join(content_parts)
 
     def _resolve_tools(self, cfg: dict) -> list:
-        tool_map = {t.name: t for t in get_tools()}
+        tool_map = {getattr(t, "__name__", str(t)): t for t in get_tools()}
         tool_names = cfg.get("tools", [])
         if not tool_names and self.agent_id == "direct":
             return list(tool_map.values())

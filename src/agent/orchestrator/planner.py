@@ -194,3 +194,11 @@ def _convert_history(history: list[dict] | None) -> list[dict[str, str]]:
             text += f"\n[Tool calls: {calls_text}]"
         converted.append({"role": role, "content": text})
     return converted
+
+
+# Register Plan with LangGraph checkpoint serializer
+try:
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+    JsonPlusSerializer.register_type(Plan, "src.agent.orchestrator.planner", "Plan")
+except Exception:
+    pass
