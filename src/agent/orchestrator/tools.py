@@ -8,6 +8,7 @@ create_react_agent with standard tool-calling semantics.
 from __future__ import annotations
 
 import logging
+import time
 
 from langchain.tools import BaseTool
 from langchain_core.messages import HumanMessage
@@ -45,6 +46,12 @@ class SubAgentTool(BaseTool):
         agents_config = cm.get_agents()
         cfg = agents_config.get(self.agent_id, {})
         agent_tools = self._resolve_tools(cfg)
+        tool_names = [getattr(t, "__name__", str(t)) for t in agent_tools]
+
+        model_name = cfg.get("model", "default")
+        logger.info("[SubAgent] %s request — model=%s tools=%s task=%d chars",
+                     self.agent_id, model_name, tool_names, len(task))
+        logger.debug("[SubAgent] %s task: %.500s", self.agent_id, task)
 
         agent_model = _models.resolve_model(
             self.config,
@@ -66,6 +73,7 @@ class SubAgentTool(BaseTool):
             "Produce the actual output (answer, code, report) directly.\n\n"
             f"---\n{task}\n---"
         )
+        _start = time.time()
         try:
             async for event in graph.astream_events(
                 {"messages": [HumanMessage(content=directive)]},
@@ -78,10 +86,15 @@ class SubAgentTool(BaseTool):
                     if chunk.content:
                         content_parts.append(chunk.content)
         except Exception as e:
-            logger.error("[SubAgentTool] agent %s error: %s", self.agent_id, e)
+            logger.error("[SubAgent] %s error: %s", self.agent_id, e)
             return f"Agent error: {e}"
 
-        return "".join(content_parts)
+        elapsed = int((time.time() - _start) * 1000)
+        result = "".join(content_parts)
+        logger.info("[SubAgent] %s response — %d chars in %dms",
+                     self.agent_id, len(result), elapsed)
+        logger.debug("[SubAgent] %s response: %.500s", self.agent_id, result)
+        return result
 
     def _resolve_tools(self, cfg: dict) -> list:
         tool_map = {getattr(t, "__name__", str(t)): t for t in get_tools()}
@@ -111,8 +124,12 @@ class ACPSubAgentTool(BaseTool):
     async def _arun(self, task: str) -> str:
         from src.agent.acp_agent import get_acp_agent
 
+        logger.info("[ACPSubAgent] %s request — task=%d chars", self.acp_cli_id, len(task))
+        logger.debug("[ACPSubAgent] %s task: %.500s", self.acp_cli_id, task)
+
         acp = get_acp_agent(self.acp_cli_id)
         content_parts: list[str] = []
+        _start = time.time()
         async for event in acp.run(task, context=self.context):
             if event.get("type") == "message":
                 chunk = event.get("data", "")
@@ -120,4 +137,9 @@ class ACPSubAgentTool(BaseTool):
                     content_parts.append(chunk)
             elif event.get("type") == "error":
                 return f"Error: {event.get('data', '')}"
-        return "".join(content_parts)
+        elapsed = int((time.time() - _start) * 1000)
+        result = "".join(content_parts)
+        logger.info("[ACPSubAgent] %s response — %d chars in %dms",
+                     self.acp_cli_id, len(result), elapsed)
+        logger.debug("[ACPSubAgent] %s response: %.500s", self.acp_cli_id, result)
+        return result
