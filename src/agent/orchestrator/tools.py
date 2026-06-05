@@ -64,7 +64,7 @@ class SubAgentTool(BaseTool):
             max_tokens=cfg.get("max_tokens"),
         )
 
-        graph = create_react_agent(agent_model, tools=agent_tools, system_prompt=system_prompt)
+        graph = create_react_agent(agent_model, tools=agent_tools, prompt=system_prompt)
 
         content_parts: list[str] = []
         directive = (
