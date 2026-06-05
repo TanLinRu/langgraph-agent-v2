@@ -1,20 +1,76 @@
-"""Planner — 计划辅助函数 (经验管理 + Agent 描述 + History 转换)。
+"""Planner — Pydantic models + plan helpers for the v2 StateGraph.
 
-移除旧版本中的 stream() / parse_plan() / _build_prompt()，
-计划生成已移至 core.py 的 _supervisor_node_impl()。
+Contains:
+- Pydantic models: Step, Plan, AgentResult, AntiPattern, GraphState
+- Legacy helpers: build_agent_descriptions, _convert_history, load_experiences, save_experiences
+- New helpers: load_constraints, save_anti_pattern, get_constraints
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from src.agent.config_manager import get_config_manager
 
 logger = logging.getLogger(__name__)
 
 _EXPERIENCES_FILE = Path("memory/experiences.md")
+
+
+# ── Pydantic Models (v2 Graph) ──────────────────────────────────
+
+
+class Step(BaseModel):
+    agent: str
+    task: str
+    depends_on: list[str] = []
+    context: str = ""
+
+
+class Plan(BaseModel):
+    steps: list[Step]
+    reasoning: str = ""
+    auto_approve: bool = False
+
+
+class AgentResult(BaseModel):
+    agent: str
+    task: str
+    result: str
+    error: str = ""
+    elapsed_ms: int = 0
+
+
+class AntiPattern(BaseModel):
+    label: str
+    task: str
+    agent: str
+    what_happened: str
+    suggestion: str
+    severity: str = "medium"
+
+
+class GraphState(BaseModel):
+    task: str
+    history: list[dict] = []
+    history_summary: str = ""
+    plan: Plan | None = None
+    results: dict[str, AgentResult] = {}
+    errors: list[str] = []
+    review_decision: str = ""
+    review_feedback: str = ""
+    anti_patterns: list[AntiPattern] = []
+    constraints: list[str] = []
+    step_count: int = 0
+    max_steps: int = 20
+    max_revisions: int = 3
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # ── 经验管理 ────────────────────────────────────────────────────
@@ -43,6 +99,54 @@ def save_experiences(task: str, results: list[dict], review: str) -> None:
             f.write(entry)
     except OSError:
         logger.warning("Failed to save experiences")
+
+
+# ── 反模式系统 ──────────────────────────────────────────────────
+
+
+def save_anti_pattern(ap: AntiPattern) -> None:
+    """追加或更新反模式条目到 experiences.md。"""
+    _EXPERIENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # 如果已有相同 label+task，只更新时间戳（去重）
+    if _EXPERIENCES_FILE.exists():
+        content = _EXPERIENCES_FILE.read_text(encoding="utf-8")
+        marker = f"## Anti-Pattern: {ap.label}"
+        if marker in content and ap.task in content:
+            # 已存在相同条目 — 跳过（简单去重）
+            logger.info("[AntiPattern] duplicate skipped: %s / %s", ap.label, ap.task)
+            return
+    entry = (
+        f"\n## Anti-Pattern: {ap.label}\n"
+        f"- Task: {ap.task}\n"
+        f"- Agent: {ap.agent}\n"
+        f"- What happened: {ap.what_happened}\n"
+        f"- Suggestion: {ap.suggestion}\n"
+        f"- Severity: {ap.severity}\n"
+        f"- Date: {date_str}\n"
+    )
+    try:
+        with _EXPERIENCES_FILE.open("a", encoding="utf-8") as f:
+            f.write(entry)
+    except OSError:
+        logger.warning("Failed to save anti-pattern")
+
+
+def load_constraints() -> list[str]:
+    """从 experiences.md 提炼最近 N 条约束。"""
+    if not _EXPERIENCES_FILE.exists():
+        return []
+    try:
+        content = _EXPERIENCES_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    constraints: list[str] = []
+    for line in content.split("\n"):
+        if line.startswith("- Suggestion:"):
+            suggestion = line[len("- Suggestion:"):].strip()
+            if suggestion:
+                constraints.append(suggestion)
+    return constraints[-10:]  # 最多取最近 10 条
 
 
 # ── Agent 描述构建 ──────────────────────────────────────────────

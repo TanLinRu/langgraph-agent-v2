@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { listTools, fetchAgents, updateAgentConfig, type AgentInfo } from '../utils/api'
 
 export const useAgentsStore = defineStore('agents', () => {
-  const tools = ref<Array<{ name: string; description: string; type: string; icon: string; usage: number; lastUsed: string | null }>>([])
+  const tools = ref<Array<{ name: string; description: string; type: string; icon: string; category?: string; enabled?: boolean; usage: number; lastUsed: string | null }>>([])
   const agents = ref<AgentInfo[]>([])
   const isLoading = ref(false)
   const selectedAgentId = ref<string | null>(null)

@@ -1,21 +1,22 @@
-"""Orchestrator — 3 节点 LangGraph StateGraph (Supervisor → Execute → Review).
+"""Orchestrator — 6-node LangGraph StateGraph (perceive→plan→wait→dispatch→synthesize→reflect).
 
-替换旧的过程式流水线 (Planner → Dispatcher → Summarizer)。
-
-事件桥接: 节点函数将事件压入 asyncio.Queue, run() 并发消费并 yield。
+Replaces the old 3-node supervisor→execute→review graph.
+Supports interrupt/resume via langgraph.types.interrupt() + Command().
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-import re
 import time
+import uuid
 from collections.abc import AsyncIterator
-from typing import Any, TypedDict
+from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph
+from langgraph.types import Command, interrupt
 
 from src.agent import models as _models
 from src.agent.config import AgentConfig
@@ -23,42 +24,55 @@ from src.agent.config_manager import get_config_manager
 from src.agent.orchestrator._events import (
     make_audit_summary,
     make_done,
+    make_error,
     make_message,
     make_metrics,
     make_plan,
+    make_summary,
     make_task_update,
     make_thinking,
     make_thinking_done,
     make_thinking_start,
 )
 from src.agent.orchestrator.planner import (
+    AntiPattern,
+    AgentResult,
+    GraphState,
+    Plan,
+    Step,
     build_agent_descriptions,
+    load_constraints,
     load_experiences,
-    save_experiences,
+    save_anti_pattern,
 )
 from src.agent.orchestrator.tools import ACPSubAgentTool, SubAgentTool
-from src.agent.prompts.system_prompt import AUDITOR_PROMPT, SUPERVISOR_PLAN_PROMPT
+from src.agent.prompts.system_prompt import (
+    AUDITOR_PROMPT,
+    REFLECT_PROMPT,
+    SUPERVISOR_PLAN_PROMPT_V2,
+)
 
 logger = logging.getLogger(__name__)
-
-_PLAN_RE = re.compile(r"^\s*-?\s*\**\s*(\w+)\s*\**\s*[:：]\s*(.+)", re.MULTILINE)
-
-
-class GraphState(TypedDict):
-    messages: list[BaseMessage]
-    plan_text: str
-    steps: list[dict]
-    results: list[dict]
-    errors: list[dict]
-    review: str
 
 
 def _estimate_tokens(text: str) -> int:
     return max(1, int(len(text) * 1.5))
 
 
+def _is_echo_output(task: str, result: str) -> bool:
+    """Heuristic: result merely echoes the task verbatim instead of executing it."""
+    task_clean = task.strip().lower()
+    result_clean = result.strip().lower()
+    if len(task_clean) < 10:
+        return False
+    if task_clean not in result_clean:
+        return False
+    # Result contains the task verbatim and isn't substantially longer
+    return len(result_clean) < len(task_clean) * 3
+
+
 class Orchestrator:
-    """多 agent 编排器 — StateGraph 3 节点版本。"""
+    """多 agent 编排器 — StateGraph 6 节点版本。"""
 
     def __init__(self, config: AgentConfig):
         self.config = config
@@ -67,6 +81,9 @@ class Orchestrator:
         self.acp_agents: dict[str, str] = {}
         self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._tokens: dict[str, dict[str, int]] = {}
+        self._agent_calls: int = 0
+        self._memory_provider: Any = None
+        self._interrupted_threads: dict[str, Any] = {}
         self._load_agent_configs()
 
     def _load_agent_configs(self):
@@ -82,169 +99,410 @@ class Orchestrator:
         if "direct" not in self.sub_agents:
             self.sub_agents["direct"] = {}
 
-    # ── Supervisor Node ────────────────────────────────────────
+    # ── Node: Perceive ───────────────────────────────────────
 
-    async def _supervisor_node_impl(self, state: GraphState) -> dict:
-        task = state["messages"][-1].content if state["messages"] else ""
+    async def _perceive_node(self, state: GraphState) -> dict:
+        await self.queue.put(make_thinking_start("supervisor"))
+
+        history = state.history or []
+        task = state.task
+
+        if history:
+            turns = []
+            for msg in history:
+                if isinstance(msg, dict):
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if content:
+                        turns.append(f"[{role}] {content}")
+            summary_text = "\n".join(turns)
+        else:
+            summary_text = f"Task: {task}"
+
+        await self.queue.put(make_thinking("supervisor", "Context perception complete"))
+        await self.queue.put(make_thinking_done("supervisor"))
+
+        return {"history_summary": summary_text}
+
+    # ── Node: Plan ───────────────────────────────────────────
+
+    async def _plan_node(self, state: GraphState) -> dict:
+        task = state.task
+        history_summary = state.history_summary
+        constraints = state.constraints or load_constraints()
+
         await self.queue.put(make_thinking_start("supervisor"))
 
         agent_descriptions = build_agent_descriptions()
         experiences = load_experiences()
-        prompt = SUPERVISOR_PLAN_PROMPT.format(
+
+        feedback_section = ""
+        if state.review_feedback:
+            feedback_section = f"\nUser revision feedback:\n{state.review_feedback}\n"
+
+        constraints_section = ""
+        if constraints:
+            constraints_section = "\nConstraints from prior sessions:\n" + "\n".join(f"- {c}" for c in constraints)
+
+        prompt = SUPERVISOR_PLAN_PROMPT_V2.format(
             agent_descriptions=agent_descriptions,
             experiences=experiences if experiences else "No prior experiences.",
+            constraints=constraints_section,
+            feedback=feedback_section,
         )
 
         messages = [{"role": "system", "content": prompt}]
-        for msg in state["messages"][:-1]:
-            role = "user" if msg.type == "human" else "assistant"
-            messages.append({"role": role, "content": str(msg.content)})
-        messages.append({"role": "user", "content": task})
+        if history_summary:
+            messages.append({"role": "user", "content": f"Context:\n{history_summary}\n\nTask: {task}"})
+        else:
+            messages.append({"role": "user", "content": f"Task: {task}"})
 
         node_start = time.time()
         plan_text = ""
+        request_preview = " ".join(str(m.get("content", "")) for m in messages)[:1000]
+        logger.info("[LLM] supervisor plan request: %s", request_preview)
         async for chunk in self.model.astream(messages):
             reasoning = chunk.additional_kwargs.get("reasoning_content")
             if reasoning:
                 await self.queue.put(make_thinking("supervisor", reasoning))
             if chunk.content:
                 plan_text += chunk.content
+        logger.info("[LLM] supervisor plan response (%d chars): %s", len(plan_text), plan_text[:1000])
 
         input_text = " ".join(str(m.get("content", "")) for m in messages)
+        prev = self._tokens.get("supervisor", {})
         self._tokens["supervisor"] = {
-            "input": _estimate_tokens(input_text),
-            "output": _estimate_tokens(plan_text),
-            "ms": int((time.time() - node_start) * 1000),
+            "input": prev.get("input", 0) + _estimate_tokens(input_text),
+            "output": prev.get("output", 0) + _estimate_tokens(plan_text),
+            "ms": prev.get("ms", 0) + int((time.time() - node_start) * 1000),
         }
 
         await self.queue.put(make_thinking_done("supervisor"))
-        await self.queue.put(make_plan("supervisor", plan_text))
 
-        steps = self._parse_plan(plan_text)
-        return {"plan_text": plan_text, "steps": steps}
+        # Extract JSON object from plan text (may be wrapped in markdown / fences)
+        clean = plan_text.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[-1] if "\n" in clean else clean
+            clean = clean.rsplit("```", 1)[0] if "```" in clean else clean
+            clean = clean.strip()
 
-    # ── Execute Node ───────────────────────────────────────────
+        plan: Plan | None = None
+        if not clean.startswith("{"):
+            import re
+            brace = clean.find("{")
+            if brace >= 0:
+                clean = clean[brace:]
+                close = clean.rfind("}")
+                if close >= 0:
+                    clean = clean[: close + 1]
 
-    async def _execute_node_impl(self, state: GraphState) -> dict:
-        results: list[dict] = []
-        errors: list[dict] = []
-        task = state["messages"][-1].content if state["messages"] else ""
+        if clean.startswith("{"):
+            try:
+                import json as _json
+                raw_dict = _json.loads(clean)
+                for s in raw_dict.get("steps", []):
+                    s["depends_on"] = [str(d) for d in s.get("depends_on", [])]
+                plan = Plan(**raw_dict)
+            except Exception:
+                plan = None
+
+        if plan is None:
+            steps = self._parse_plan_fallback(plan_text)
+            plan = Plan(steps=steps, reasoning=plan_text)
+
+        plan_display = self._format_plan_display(plan)
+        await self.queue.put(make_plan(
+            "supervisor", plan_display,
+            steps=[s.model_dump() for s in plan.steps],
+        ))
+
+        return {"plan": plan}
+
+    # ── Node: Wait (interrupt point) ─────────────────────────
+
+    async def _wait_node(self, state: GraphState) -> dict:
+        plan_json = state.plan.model_dump() if state.plan else {}
+        interrupt({"plan": plan_json})
+        return {}
+
+    # ── Node: Dispatch ───────────────────────────────────────
+
+    async def _dispatch_node(self, state: GraphState) -> dict:
+        plan = state.plan
+        if not plan or not plan.steps:
+            return {"results": {}, "errors": ["No plan steps to execute"]}
+
+        tasks = plan.steps
+        history_summary = state.history_summary
         valid_agents = set(self.sub_agents.keys()) | set(self.acp_agents.keys())
+        results: dict[str, AgentResult] = {}
+        errors: list[str] = []
 
-        steps = state.get("steps", [])
-        if not steps:
-            steps = [{"agent": "direct", "task": task.strip()}]
-
-        for step in steps:
-            agent_name = step["agent"]
-            subtask = step["task"]
+        async def _run_step(step: Step) -> AgentResult:
+            agent_name = step.agent
             if agent_name not in valid_agents:
-                logger.warning("[Execute] unknown agent %s, skipping", agent_name)
-                continue
+                logger.warning("[Dispatch] unknown agent %s, skipping", agent_name)
+                return AgentResult(agent=agent_name, task=step.task, result="", error=f"Unknown agent: {agent_name}")
 
-            await self.queue.put(make_task_update("supervisor", agent_name, subtask, "running"))
+            await self.queue.put(
+                make_task_update("supervisor", agent_name, step.task, "running")
+            )
 
             agent_start = time.time()
             try:
                 if agent_name in self.acp_agents:
                     tool = ACPSubAgentTool(
-                        agent_id=agent_name, acp_cli_id=self.acp_agents[agent_name]
+                        agent_id=agent_name,
+                        acp_cli_id=self.acp_agents[agent_name],
+                        context=history_summary,
                     )
                 else:
-                    tool = SubAgentTool(agent_id=agent_name, config=self.config)
-                result_text = await tool._arun(subtask)
+                    tool = SubAgentTool(
+                        agent_id=agent_name,
+                        config=self.config,
+                        context=history_summary,
+                    )
+                result_text = await tool._arun(step.task)
             except Exception as e:
-                logger.error("[Execute] agent %s error: %s", agent_name, e)
-                errors.append({"agent": agent_name, "task": subtask, "error": str(e)})
+                logger.error("[Dispatch] agent %s error: %s", agent_name, e)
                 await self.queue.put(
-                    make_task_update("supervisor", agent_name, subtask, "failed")
+                    make_task_update("supervisor", agent_name, step.task, "failed")
                 )
-                continue
+                return AgentResult(agent=agent_name, task=step.task, result="", error=str(e))
 
+            if not result_text.strip():
+                logger.warning("[Dispatch] agent %s returned empty result", agent_name)
+                await self.queue.put(
+                    make_error(agent_name, f"Agent {agent_name} returned no output")
+                )
+                await self.queue.put(
+                    make_task_update("supervisor", agent_name, step.task, "failed")
+                )
+                return AgentResult(agent=agent_name, task=step.task, result="", error="Agent returned no output")
+
+            if _is_echo_output(step.task, result_text):
+                logger.warning("[Dispatch] agent %s echoed task instead of executing", agent_name)
+                await self.queue.put(
+                    make_error(agent_name, f"Agent {agent_name} repeated the task instead of executing it")
+                )
+                await self.queue.put(
+                    make_task_update("supervisor", agent_name, step.task, "failed")
+                )
+                return AgentResult(agent=agent_name, task=step.task, result="", error="Agent echoed task, did not execute")
+
+            elapsed = int((time.time() - agent_start) * 1000)
+            prev_tokens = self._tokens.get(agent_name, {})
             self._tokens[agent_name] = {
-                "input": _estimate_tokens(subtask),
-                "output": _estimate_tokens(result_text),
-                "ms": int((time.time() - agent_start) * 1000),
+                "input": prev_tokens.get("input", 0) + _estimate_tokens(step.task),
+                "output": prev_tokens.get("output", 0) + _estimate_tokens(result_text),
+                "ms": prev_tokens.get("ms", 0) + elapsed,
             }
 
-            results.append({"agent": agent_name, "task": subtask, "result": result_text})
+            self._agent_calls += 1
             await self.queue.put(make_message(agent_name, result_text))
             await self.queue.put(
-                make_task_update("supervisor", agent_name, subtask, "completed")
+                make_task_update("supervisor", agent_name, step.task, "completed")
             )
+            return AgentResult(agent=agent_name, task=step.task, result=result_text, elapsed_ms=elapsed)
+
+        # Build DAG from depends_on
+        step_map = {s.agent: s for s in tasks}
+        executed: set[str] = set()
+        while len(executed) < len(tasks):
+            batch = []
+            for s in tasks:
+                if s.agent in executed:
+                    continue
+                deps = s.depends_on
+                if all(d in executed for d in deps):
+                    batch.append(s)
+            if not batch:
+                # Circular dependency or unknown deps — execute remaining in order
+                batch = [s for s in tasks if s.agent not in executed]
+                if not batch:
+                    break
+
+            batch_results = await asyncio.gather(*[_run_step(s) for s in batch], return_exceptions=True)
+            for r in batch_results:
+                if isinstance(r, Exception):
+                    errors.append(str(r))
+                elif isinstance(r, AgentResult):
+                    results[r.agent] = r
+                    if r.error:
+                        errors.append(f"{r.agent}: {r.error}")
+                    executed.add(r.agent)
 
         return {"results": results, "errors": errors}
 
-    # ── Review Node ────────────────────────────────────────────
+    # ── Node: Synthesize ─────────────────────────────────────
 
-    async def _review_node_impl(self, state: GraphState) -> dict:
-        task = state["messages"][-1].content if state["messages"] else ""
-        results = state.get("results", [])
+    async def _synthesize_node(self, state: GraphState) -> dict:
+        task = state.task
+        results = state.results
+        errors = state.errors
 
         if not results:
-            review_msg = "No agents were executed. All steps were skipped or failed."
-            self._tokens["review"] = {"input": 0, "output": _estimate_tokens(review_msg), "ms": 0}
-            await self.queue.put(make_audit_summary("supervisor", review_msg))
-            return {"review": "no_results"}
+            review_decision = "reject"
+            return {"review_decision": review_decision, "review_feedback": "No results to review"}
 
         results_text = "\n\n".join(
-            f"**{r['agent']}** ({r['task']}):\n{r['result'][:500]}" for r in results
+            f"**{r.agent}** ({r.task}):\n{r.result[:500]}"
+            for r in results.values()
         )
         prompt = AUDITOR_PROMPT.format(task=task, results=results_text)
 
         node_start = time.time()
         review_text = ""
+        logger.info("[LLM] review request: %s", prompt[:1000])
         async for chunk in self.model.astream([{"role": "user", "content": prompt}]):
             if chunk.content:
                 review_text += chunk.content
+        logger.info("[LLM] review response (%d chars): %s", len(review_text), review_text[:1000])
 
-        save_experiences(task, results, review_text)
+        prev = self._tokens.get("review", {})
         self._tokens["review"] = {
-            "input": _estimate_tokens(prompt),
-            "output": _estimate_tokens(review_text),
-            "ms": int((time.time() - node_start) * 1000),
+            "input": prev.get("input", 0) + _estimate_tokens(prompt),
+            "output": prev.get("output", 0) + _estimate_tokens(review_text),
+            "ms": prev.get("ms", 0) + int((time.time() - node_start) * 1000),
         }
-        await self.queue.put(make_audit_summary("supervisor", review_text))
-        return {"review": review_text}
 
-    # ── Plan Parser ────────────────────────────────────────────
+        await self.queue.put(make_audit_summary("supervisor", review_text))
+
+        review_lower = review_text.lower()
+        if "reject" in review_lower:
+            review_decision = "reject"
+        elif "revise" in review_lower:
+            review_decision = "revise"
+        else:
+            review_decision = "approve"
+
+        return {
+            "review_decision": review_decision,
+            "review_feedback": review_text,
+        }
+
+    # ── Node: Reflect ────────────────────────────────────────
+
+    async def _reflect_node(self, state: GraphState) -> dict:
+        plan_text = state.plan.model_dump_json() if state.plan else ""
+        results_text = json.dumps(
+            {k: {"result": v.result[:200], "error": v.error} for k, v in (state.results or {}).items()},
+            ensure_ascii=False,
+        )
+        prompt = REFLECT_PROMPT.format(
+            task=state.task,
+            plan=plan_text,
+            results=results_text,
+            errors=json.dumps(state.errors, ensure_ascii=False),
+            review_decision=state.review_decision,
+        )
+
+        reflect_text = ""
+        logger.info("[LLM] reflect request: %s", prompt[:1000])
+        async for chunk in self.model.astream([{"role": "user", "content": prompt}]):
+            if chunk.content:
+                reflect_text += chunk.content
+        logger.info("[LLM] reflect response (%d chars): %s", len(reflect_text), reflect_text[:1000])
+
+        try:
+            patterns_data = json.loads(reflect_text)
+            if isinstance(patterns_data, list):
+                for item in patterns_data:
+                    ap = AntiPattern(**item)
+                    save_anti_pattern(ap)
+        except Exception:
+            pass
+
+        constraints = load_constraints()
+        return {"anti_patterns": [], "constraints": constraints}
+
+    # ── Routing ──────────────────────────────────────────────
+
+    def _route_from_plan(self, state: GraphState) -> str:
+        if state.plan and (state.plan.auto_approve or len(state.plan.steps) <= 1):
+            return "dispatch"
+        return "wait"
+
+    def _route_from_synthesize(self, state: GraphState) -> str:
+        decision = state.review_decision
+        state.step_count = getattr(state, "step_count", 0) + 1
+
+        if decision == "revise" and state.step_count >= state.max_revisions:
+            return "approve"
+        if state.step_count >= state.max_steps:
+            return "approve"
+
+        if decision == "reject":
+            return "reject"
+        if decision == "revise":
+            return "revise"
+        return "approve"
+
+    # ── Fallback plan parser ─────────────────────────────────
 
     @staticmethod
-    def _parse_plan(plan_text: str) -> list[dict]:
-        results: list[dict] = []
-        for m in _PLAN_RE.finditer(plan_text):
+    def _parse_plan_fallback(plan_text: str) -> list[Step]:
+        import re
+        results: list[Step] = []
+        pattern = re.compile(r"^\s*-?\s*\**\s*(\w+)\s*\**\s*[:：]\s*(.+)", re.MULTILINE)
+        for m in pattern.finditer(plan_text):
             agent_name = m.group(1).lower().strip("*")
             task = m.group(2).strip()
-            results.append({"agent": agent_name, "task": task})
+            results.append(Step(agent=agent_name, task=task))
         return results
 
-    # ── Graph Construction ─────────────────────────────────────
+    # ── Plan display formatting ──────────────────────────────
+
+    @staticmethod
+    def _format_plan_display(plan: Plan) -> str:
+        """将结构化 Plan 渲染为可读的 Markdown (中文),包含流程、推理、产物。"""
+        parts: list[str] = []
+        parts.append("## 📋 执行计划\n")
+        for i, step in enumerate(plan.steps):
+            deps = f" (依赖: {', '.join(step.depends_on)})" if step.depends_on else ""
+            parts.append(f"### {i + 1}. **{step.agent}**{deps}")
+            parts.append(f"{step.task}\n")
+        if plan.reasoning:
+            parts.append("---\n")
+            parts.append(f"### 💡 推理说明\n{plan.reasoning}")
+        return "\n".join(parts)
+
+    # ── Graph Construction ───────────────────────────────────
 
     def _build_graph(self):
-        graph = StateGraph(GraphState)
+        builder = StateGraph(GraphState)
 
-        async def supervisor_node(state: GraphState) -> dict:
-            return await self._supervisor_node_impl(state)
+        builder.add_node("perceive", self._perceive_node)
+        builder.add_node("plan", self._plan_node)
+        builder.add_node("wait", self._wait_node)
+        builder.add_node("dispatch", self._dispatch_node)
+        builder.add_node("synthesize", self._synthesize_node)
+        builder.add_node("reflect", self._reflect_node)
 
-        async def execute_node(state: GraphState) -> dict:
-            return await self._execute_node_impl(state)
-
-        async def review_node(state: GraphState) -> dict:
-            return await self._review_node_impl(state)
-
-        graph.add_node("supervisor", supervisor_node)
-        graph.add_node("execute", execute_node)
-        graph.add_node("review", review_node)
-        graph.add_edge("supervisor", "execute")
-        graph.add_edge("execute", "review")
-        graph.add_conditional_edges(
-            "review",
-            lambda s: "end" if s.get("review") else "execute",
+        builder.set_entry_point("perceive")
+        builder.add_edge("perceive", "plan")
+        builder.add_conditional_edges(
+            "plan",
+            self._route_from_plan,
+            {"dispatch": "dispatch", "wait": "wait"},
         )
-        graph.set_entry_point("supervisor")
-        return graph.compile()
+        builder.add_edge("wait", "dispatch")
+        builder.add_edge("dispatch", "synthesize")
+        builder.add_conditional_edges(
+            "synthesize",
+            self._route_from_synthesize,
+            {
+                "approve": "reflect",
+                "revise": "plan",
+                "reject": "__end__",
+            },
+        )
+        builder.add_edge("reflect", "__end__")
 
-    # ── Main Entry ─────────────────────────────────────────────
+        checkpointer = MemorySaver()
+        return builder.compile(checkpointer=checkpointer)
+
+    # ── Main Entry ───────────────────────────────────────────
 
     async def run(
         self,
@@ -256,38 +514,25 @@ class Orchestrator:
         self.queue = asyncio.Queue()
         graph_app = self._build_graph()
 
-        messages: list[BaseMessage] = []
-        if summary:
-            messages.append(
-                SystemMessage(content=f"[Previous Conversation Summary]\n{summary}")
-            )
-        if history:
-            for msg in history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role == "human":
-                    messages.append(HumanMessage(content=content))
-                else:
-                    from langchain_core.messages import AIMessage
-                    messages.append(AIMessage(content=content))
-        messages.append(HumanMessage(content=task))
+        initial = GraphState(
+            task=task,
+            history=history or [],
+            history_summary=summary or "",
+        )
 
-        initial_state: GraphState = {
-            "messages": messages,
-            "plan_text": "",
-            "steps": [],
-            "results": [],
-            "errors": [],
-            "review": "",
-        }
+        thread_id = str(uuid.uuid4())
+        thread_config = {"configurable": {"thread_id": thread_id}}
 
-        run_task = asyncio.create_task(graph_app.ainvoke(initial_state))
+        run_task = asyncio.create_task(
+            graph_app.ainvoke(initial, config=thread_config)
+        )
 
+        final_state = None
+        interrupted = False
         while True:
             done_fut = asyncio.ensure_future(run_task)
             get_coro = self.queue.get()
             queue_fut = asyncio.ensure_future(get_coro)
-
             pending = {done_fut, queue_fut}
             done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
 
@@ -295,17 +540,86 @@ class Orchestrator:
                 queue_fut.cancel()
                 while not self.queue.empty():
                     yield await self.queue.get()
+                final_state = done_fut.result()
+                if isinstance(final_state, dict) and "__interrupt__" in final_state:
+                    interrupted = True
+                    plan_data = final_state.get("plan")
+                    plan_json = plan_data.model_dump() if isinstance(plan_data, Plan) else None
+                    self._interrupted_threads[thread_id] = graph_app
+                    yield {"type": "interrupt", "data": {
+                        "thread_id": thread_id,
+                        "plan": plan_json,
+                    }}
                 break
-
             if queue_fut in done:
-                evt = await queue_fut
-                yield evt
+                yield await queue_fut
 
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        final = initial_state
+        if interrupted:
+            return
+
+        elapsed = int((time.time() - start_time) * 1000)
         yield make_metrics("supervisor", {
-            "elapsed_ms": elapsed_ms,
-            "agent_calls": len(final.get("results", [])),
+            "elapsed_ms": elapsed,
+            "agent_calls": self._agent_calls,
             "tokens": self._tokens,
         })
         yield make_done()
+
+    # ── Resume ───────────────────────────────────────────────
+
+    async def resume(
+        self,
+        thread_id: str,
+        decision: str,
+        feedback: str = "",
+    ) -> AsyncIterator[dict[str, Any]]:
+        graph_app = self._interrupted_threads.get(thread_id)
+        if not graph_app:
+            raise ValueError(f"No interrupted thread: {thread_id}")
+
+        thread_config = {"configurable": {"thread_id": thread_id}}
+        self.queue = asyncio.Queue()
+
+        if decision == "approve":
+            cmd = Command(resume="approved")
+        elif decision == "revise":
+            graph_app.update_state(thread_config, {
+                "plan": None,
+                "review_feedback": feedback,
+            })
+            cmd = Command(resume="revised")
+        elif decision == "reject":
+            graph_app.update_state(thread_config, {
+                "review_decision": "reject",
+            })
+            cmd = Command(resume="rejected")
+        else:
+            raise ValueError(f"Unknown decision: {decision}")
+
+        run_task = asyncio.create_task(
+            graph_app.ainvoke(cmd, config=thread_config)
+        )
+
+        while True:
+            done_fut = asyncio.ensure_future(run_task)
+            get_coro = self.queue.get()
+            queue_fut = asyncio.ensure_future(get_coro)
+            pending = {done_fut, queue_fut}
+            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
+            if done_fut in done:
+                queue_fut.cancel()
+                while not self.queue.empty():
+                    yield await self.queue.get()
+                done_fut.result()  # propagate any exception
+                break
+            if queue_fut in done:
+                yield await queue_fut
+
+        yield make_metrics("supervisor", {
+            "elapsed_ms": 0,
+            "agent_calls": self._agent_calls,
+            "tokens": self._tokens,
+        })
+        yield make_done()
+        self._interrupted_threads.pop(thread_id, None)

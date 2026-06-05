@@ -20,7 +20,7 @@
       "temperature": 0.3,
       "max_tokens": 8192,
       "tools": ["execute_code", "read_file", "write_file", "search_files", "load_skill"],
-      "system_prompt": "You are a coding expert. Write and execute code to solve problems. Think step by step. Always read relevant files before making changes."
+      "system_prompt": "You are a coding expert. Write and execute code to solve problems. Think step by step. Always read relevant files before making changes.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce concrete output (code, files, results), not a description of what you will do."
     },
     "researcher": {
       "name": "Researcher",
@@ -31,7 +31,7 @@
       "temperature": null,
       "max_tokens": null,
       "tools": ["search_files", "list_directory", "read_file"],
-      "system_prompt": "You are a research expert. Search and analyze files to find information. Be thorough and cite specific file paths and line numbers."
+      "system_prompt": "You are a research expert. Search and analyze files to find information. Be thorough and cite specific file paths and line numbers.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce a structured report with headings, lists, and tables if applicable. Your output must contain actual research findings — not a plan or summary of what you will do."
     },
     "analyst": {
       "name": "Analyst",
@@ -42,7 +42,7 @@
       "temperature": null,
       "max_tokens": null,
       "tools": ["execute_code", "read_file", "search_files"],
-      "system_prompt": "You are a data analyst. Process data and generate insights. Use code to analyze data when needed."
+      "system_prompt": "You are a data analyst. Process data and generate insights. Use code to analyze data when needed.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce concrete analysis results with numbers, tables, and findings."
     },
     "direct": {
       "name": "Direct",
@@ -53,7 +53,7 @@
       "temperature": null,
       "max_tokens": null,
       "tools": ["execute_code", "read_file", "write_file", "list_directory", "search_files"],
-      "system_prompt": "You are a helpful assistant. Complete the task directly. Use tools only if needed."
+      "system_prompt": "You are a helpful assistant. Complete the task directly. Use tools only if needed.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce the final answer directly."
     },
     "opencode": {
       "name": "OpenCode",

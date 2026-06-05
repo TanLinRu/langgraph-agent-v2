@@ -116,6 +116,7 @@ export async function restoreSession(sessionId: string): Promise<{
   task_updates: TaskUpdate[]
   metrics: MetricsData | null
   audit_summary: string
+  project_path: string
 }> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`)
   if (!res.ok) throw new Error(`Session not found: ${sessionId}`)
@@ -145,6 +146,21 @@ export async function listDrives(): Promise<Array<{ path: string; label: string 
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json()
   return data.drives
+}
+
+/** 提交 plan 审核决策 /api/orchestrate/:session_id/review (POST) */
+export async function reviewPlan(
+  sessionId: string,
+  threadId: string,
+  decision: 'approve' | 'revise' | 'reject',
+  feedback?: string,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/orchestrate/${sessionId}/review`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, thread_id: threadId, decision, feedback: feedback || '' }),
+  })
+  if (!res.ok) throw new Error(`Review plan failed: ${res.status}`)
 }
 
 /** 压缩会话 /api/compact (POST) */

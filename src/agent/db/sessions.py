@@ -162,6 +162,16 @@ def update_session_status(session_id: str, status: str) -> None:
     conn.close()
 
 
+def get_session_project_path(session_id: str) -> str:
+    """获取会话的工作目录路径。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT project_path FROM sessions WHERE session_id = ?", (session_id,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row and row[0] else ""
+
+
 def update_session_project_path(session_id: str, project_path: str) -> None:
     """更新会话的工作目录路径。"""
     conn = _get_conn()

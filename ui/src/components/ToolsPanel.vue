@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAgentsStore } from '../stores/agents'
 
 const store = useAgentsStore()
@@ -9,6 +9,8 @@ interface ToolInfo {
   description: string
   type: string
   icon: string
+  category?: string
+  enabled?: boolean
   usage: number
   lastUsed: string | null
 }
@@ -19,22 +21,21 @@ onMounted(() => {
   store.fetchTools()
 })
 
-const TOOL_CATEGORIES: Record<string, { icon: string; color: string; tools: string[] }> = {
-  Core: { icon: '⚙', color: '#818cf8', tools: ['execute_code', 'read_file', 'write_file', 'list_directory', 'search_files'] },
-  Skill: { icon: '📄', color: '#fbbf24', tools: [] },
-  MCP: { icon: '🔌', color: '#34d399', tools: [] },
+const CATEGORY_META: Record<string, { icon: string; color: string; label: string }> = {
+  Core: { icon: '⚙', color: '#818cf8', label: '核心工具' },
+  Skill: { icon: '📄', color: '#fbbf24', label: '技能' },
+  MCP: { icon: '🔌', color: '#34d399', label: 'MCP' },
 }
 
-function getCategory(toolName: string): string {
-  for (const [cat, info] of Object.entries(TOOL_CATEGORIES)) {
-    if (info.tools.includes(toolName)) return cat
+const toolCategories = computed(() => {
+  const groups: Record<string, ToolInfo[]> = {}
+  for (const tool of store.tools as ToolInfo[]) {
+    const cat = tool.category || 'Core'
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(tool)
   }
-  return 'Skill'
-}
-
-function getToolsByCategory(cat: string): ToolInfo[] {
-  return store.tools.filter(t => getCategory(t.name) === cat) as ToolInfo[]
-}
+  return groups
+})
 
 function selectTool(tool: ToolInfo) {
   selectedTool.value = selectedTool.value?.name === tool.name ? null : tool
@@ -56,31 +57,30 @@ function formatLastUsed(dateStr: string | null): string {
 
 <template>
   <div class="tools-panel">
-    <template v-for="(info, cat) in TOOL_CATEGORIES" :key="cat">
+    <template v-for="(tools, cat) in toolCategories" :key="cat">
       <div class="tools-group">
         <div class="tools-group-h">
-          <span :style="{ color: info.color }">{{ info.icon }}</span>
-          {{ cat === 'Core' ? '核心工具' : cat === 'Skill' ? '技能' : 'MCP' }}
-          <span :class="['tools-type-badge', cat.toLowerCase()]">{{ getToolsByCategory(cat).length }}</span>
+          <span :style="{ color: (CATEGORY_META[cat] || { color: '#94a3b8' }).color }">{{ (CATEGORY_META[cat] || { icon: '⚙' }).icon }}</span>
+          {{ (CATEGORY_META[cat] || { label: cat }).label }}
+          <span :class="['tools-type-badge', cat.toLowerCase()]">{{ tools.length }}</span>
         </div>
         <div
-          v-for="tool in getToolsByCategory(cat)"
+          v-for="tool in tools"
           :key="tool.name"
           :class="['tool-card', { selected: selectedTool?.name === tool.name }]"
           @click="selectTool(tool)"
         >
-          <div class="tool-icon-s" :style="{ background: info.color + '18', color: info.color }">{{ info.icon }}</div>
+          <div class="tool-icon-s" :style="{ background: (CATEGORY_META[cat] || { color: '#94a3b8' }).color + '18', color: (CATEGORY_META[cat] || { color: '#94a3b8' }).color }">{{ (CATEGORY_META[cat] || { icon: '⚙' }).icon }}</div>
           <div class="tool-info-s">
             <div class="tool-name-s">{{ tool.name }}</div>
             <div class="tool-desc-s">{{ tool.description }}</div>
           </div>
           <div class="tool-usage">
-            <span class="tool-usage-badge">{{ tool.usage || 0 }}</span>
+            <span v-if="!tool.enabled" class="tool-disabled-badge">已禁用</span>
+            <span v-else class="tool-usage-badge">{{ tool.usage || 0 }}</span>
           </div>
         </div>
-        <div v-if="getToolsByCategory(cat).length === 0" class="tool-empty">
-          {{ cat === 'Skill' ? '技能从 skills/*.md 运行时加载' : cat === 'MCP' ? 'MCP 工具连接后显示' : '' }}
-        </div>
+        <div v-if="tools.length === 0" class="tool-empty">暂无工具</div>
       </div>
     </template>
 
@@ -93,8 +93,12 @@ function formatLastUsed(dateStr: string | null): string {
       <div class="tool-detail-desc">{{ selectedTool.description }}</div>
       <div class="tool-detail-rows">
         <div class="tool-detail-row">
-          <span class="tool-detail-label">类型</span>
-          <span class="tool-detail-value">{{ getCategory(selectedTool.name) }}</span>
+          <span class="tool-detail-label">类别</span>
+          <span class="tool-detail-value">{{ selectedTool.category || 'Core' }}</span>
+        </div>
+        <div class="tool-detail-row">
+          <span class="tool-detail-label">启用</span>
+          <span class="tool-detail-value">{{ selectedTool.enabled !== false ? '是' : '否' }}</span>
         </div>
         <div class="tool-detail-row">
           <span class="tool-detail-label">调用次数</span>
@@ -151,6 +155,10 @@ function formatLastUsed(dateStr: string | null): string {
 .tool-usage-badge {
   background: var(--bg-hover); padding: 2px 7px; border-radius: 4px;
   font-family: 'SF Mono', monospace; font-size: 12px; color: var(--text-muted);
+}
+.tool-disabled-badge {
+  background: rgba(239,68,68,0.1); padding: 2px 7px; border-radius: 4px;
+  font-family: 'SF Mono', monospace; font-size: 12px; color: #ef4444;
 }
 .tool-empty { font-size: 12px; color: var(--text-faint); padding: 8px 0; font-style: italic; }
 

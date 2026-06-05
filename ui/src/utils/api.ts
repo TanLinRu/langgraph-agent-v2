@@ -10,7 +10,7 @@
  */
 
 export * from './api/types'
-export { streamChatCallbacks, streamChatFetch, streamOrchestrate } from './api/sse'
+export { streamChatCallbacks, streamChatFetch, streamOrchestrate, streamOrchestrateReview } from './api/sse'
 export {
   listTools,
   fetchAcpAgents,
@@ -28,4 +28,5 @@ export {
   browseDirectories,
   listDrives,
   compactSession,
+  reviewPlan,
 } from './api/endpoints'

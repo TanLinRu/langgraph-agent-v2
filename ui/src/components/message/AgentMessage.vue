@@ -230,6 +230,8 @@ function statusLabel(s?: string): string {
 
 .tool-calls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; width: 100%; align-items: flex-start; }
 
+.msg-text { font-size: 16px; line-height: 1.7; font-weight: 450; color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; }
+
 /* Markdown styles */
 .md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(h4) { margin: 16px 0 8px; font-weight: 600; color: var(--text-primary); }
 .md-body :deep(h1) { font-size: 1.4em; }

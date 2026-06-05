@@ -4,13 +4,13 @@ import { useChatStore } from '../stores/chat'
 import { useSessionsStore } from '../stores/sessions'
 import ChatHeader from './ChatHeader.vue'
 import ChatMessage from './ChatMessage.vue'
-import ThinkingPanel from './ThinkingPanel.vue'
 import TaskBoard from './TaskBoard.vue'
 import StatusBar from './StatusBar.vue'
 import InputBar from './InputBar.vue'
 import DirectoryPicker from './DirectoryPicker.vue'
 import TopologyBar from './TopologyBar.vue'
 import PermissionDialog from './PermissionDialog.vue'
+import PlanReviewDialog from './PlanReviewDialog.vue'
 
 const chat = useChatStore()
 const sessions = useSessionsStore()
@@ -67,35 +67,13 @@ onUnmounted(() => {
   if (timerInterval) { clearInterval(timerInterval); timerInterval = null }
 })
 
-// Thinking chunks tracking
-interface ThinkingChunk { agentName: string; text: string }
-const thinkingChunks = ref<ThinkingChunk[]>([])
-const thinkingStepCount = ref(0)
-const isThinkingActive = ref(false)
-
 // Task items tracking (use store-level taskItems shared with MonitorPanel)
 const taskItems = computed(() => chat.taskItems)
 const permissionRequest = computed(() => chat.permissionRequest)
+const pendingReview = computed(() => chat.pendingReview)
 
-// Watch for thinking state changes
-watch(() => chat.messages, (msgs) => {
-  // Recalculate thinking chunks from messages with thinking content
-  const chunks: ThinkingChunk[] = []
-  for (const msg of msgs) {
-    if (msg.thinking) {
-      chunks.push({ agentName: msg.agentName || 'supervisor', text: msg.thinking })
-    }
-    if (msg.isThinking) {
-      isThinkingActive.value = true
-    }
-  }
-  thinkingChunks.value = chunks
-  thinkingStepCount.value = chunks.length
-
-  // Check if any message is still thinking
-  const anyThinking = msgs.some(m => m.isThinking)
-  if (!anyThinking) isThinkingActive.value = false
-}, { deep: true })
+// Derive isThinkingActive from messages
+const isThinkingActive = computed(() => chat.messages.some(m => m.isThinking))
 
 function isTyping(i: number): boolean {
   const state = chat.typewriterState[i]
@@ -132,6 +110,10 @@ async function send() {
   if (!msg || chat.isLoading) return
   input.value = ''
   await chat.send(msg)
+}
+
+function handleReviewResolve(decision: 'approve' | 'revise' | 'reject', feedback?: string) {
+  chat.submitReview(decision, feedback)
 }
 
 function handleFileClick(path: string) {
@@ -216,14 +198,6 @@ watch(() => {
 
       <!-- Messages -->
       <template v-for="(msg, i) in chat.messages" :key="i">
-        <!-- Thinking panel — position at the last message with thinking -->
-        <ThinkingPanel
-          v-if="thinkingChunks.length > 0 && i === chat.messages.reduce((last, m, idx) => (m.isThinking || m.thinking ? idx : last), -1)"
-          :chunks="thinkingChunks"
-          :isThinking="isThinkingActive"
-          :stepCount="thinkingStepCount"
-          :elapsedMs="elapsedMs"
-        />
         <!-- Task board (shows before summary) -->
         <TaskBoard
           v-if="msg.isSummary && taskItems.length"
@@ -253,6 +227,7 @@ watch(() => {
     </div>
 
     <PermissionDialog v-if="permissionRequest" :request="permissionRequest" />
+    <PlanReviewDialog v-if="pendingReview" :review="pendingReview" @resolve="handleReviewResolve" />
     <div class="input-zone">
       <InputBar v-model="input" :isProcessing="chat.isLoading" :pendingCount="chat.pendingMessages.length" :permissionPending="!!permissionRequest" @send="send" @abort="chat.abort()" />
     </div>

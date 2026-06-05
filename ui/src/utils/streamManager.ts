@@ -1,6 +1,6 @@
 import { ref } from 'vue'
-import type { ChatMessage, LogEntry, LogEntryType, MetricsData, PermissionRequest, TaskPhaseUpdate, TaskUpdate } from './api'
-import { streamChatCallbacks, streamOrchestrate, compactSession, restoreSession as apiRestoreSession } from './api'
+import type { ChatMessage, LogEntry, LogEntryType, MetricsData, PermissionRequest, TaskPhaseUpdate, TaskUpdate, SSEEvent } from './api'
+import { streamChatCallbacks, streamOrchestrate, streamOrchestrateReview, compactSession, restoreSession as apiRestoreSession } from './api'
 import { useSessionsStore } from '../stores/sessions'
 
 export function useStreamManager(
@@ -15,6 +15,7 @@ export function useStreamManager(
   const currentDispatch = ref<{ from: string; to: string; fromLabel?: string; toLabel?: string } | null>(null)
   const pendingMessages = ref<string[]>([])
   const permissionRequest = ref<PermissionRequest | null>(null)
+  const pendingReview = ref<{ threadId: string; plan: Record<string, unknown> | null } | null>(null)
 
   let _abortController: AbortController | null = null
   let _currentAbort: { abort: () => void } | null = null
@@ -91,6 +92,17 @@ export function useStreamManager(
   }
 
   function _stopTypewriter() {
+    for (const [key, state] of Object.entries(msg.thinkTypeState.value)) {
+      if (state.done) continue
+      const idx = Number(key)
+      state.done = true
+      if (state.pendingDone) {
+        msg.setThinkingDone(idx)
+        if (!msg.messages.value[idx]?.thinking && state.full) {
+          msg.messages.value[idx]!.thinking = state.full
+        }
+      }
+    }
     if (_typeRaf !== null) {
       cancelAnimationFrame(_typeRaf)
       _typeRaf = null
@@ -151,12 +163,12 @@ export function useStreamManager(
 
     _currentAbort = streamChatCallbacks(
       content,
-      (event: Record<string, unknown>) => {
+      (event: SSEEvent) => {
         if (event.session_id) {
-          sessionId.value = event.session_id as string
-          useSessionsStore().activeSessionId = event.session_id as string
+          sessionId.value = event.session_id
+          useSessionsStore().activeSessionId = event.session_id
         }
-        const agentName = event.agent_name as string | undefined
+        const agentName = event.agent_name
         if (event.type === 'thinking_start') {
           _thinkChunkCount = 0
           ensureMsgIdx(agentName)
@@ -174,8 +186,12 @@ export function useStreamManager(
         } else if (event.type === 'thinking_done') {
           if (msgIdx >= 0 && msg.thinkTypeState.value[msgIdx]) {
             const ts = msg.thinkTypeState.value[msgIdx]
-            if (ts.done) msg.setThinkingDone(msgIdx)
-            else ts.pendingDone = true
+            if (ts.done) {
+              if (!msg.messages.value[msgIdx]?.thinking && ts.full) {
+                msg.messages.value[msgIdx]!.thinking = ts.full
+              }
+              msg.setThinkingDone(msgIdx)
+            } else ts.pendingDone = true
           } else if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
         } else if (event.type === 'tool_call') {
           _enqueueStep(() => {
@@ -198,6 +214,8 @@ export function useStreamManager(
           _enqueueStep(() => {
             msg.pushSummary('supervisor', event.data as string)
           })
+        } else if (event.type === 'metrics') {
+          msg.setMetrics(event.data as MetricsData)
         } else if (event.type === 'error') {
           _enqueueImmediate(() => msg.addError(String(event.data)))
         }
@@ -218,6 +236,7 @@ export function useStreamManager(
   }
 
   async function sendOrchestrate(task: string) {
+    const sid = sessionId.value || useSessionsStore().activeSessionId || undefined
     _setSessionStatus('processing')
     msg.addUser(task)
     msg.resetTaskItems()
@@ -228,12 +247,12 @@ export function useStreamManager(
     _appendLog('start', '开始调度任务', 'supervisor')
 
     try {
-      for await (const event of streamOrchestrate(task, sessionId.value || undefined)) {
+      for await (const event of streamOrchestrate(task, sid)) {
         if (event.session_id) {
-          sessionId.value = event.session_id as string
-          useSessionsStore().activeSessionId = event.session_id as string
+          sessionId.value = event.session_id
+          useSessionsStore().activeSessionId = event.session_id
         }
-        const agentName = (event.agent_name as string) || 'supervisor'
+        const agentName = event.agent_name || 'supervisor'
 
         if (event.type === 'thinking_start') {
           _thinkChunkCount = 0
@@ -256,8 +275,12 @@ export function useStreamManager(
           const idx = msg.ensureAssistant('supervisor')
           if (idx >= 0 && msg.thinkTypeState.value[idx]) {
             const ts = msg.thinkTypeState.value[idx]
-            if (ts.done) msg.setThinkingDone(idx)
-            else ts.pendingDone = true
+            if (ts.done) {
+              if (!msg.messages.value[idx]?.thinking && ts.full) {
+                msg.messages.value[idx]!.thinking = ts.full
+              }
+              msg.setThinkingDone(idx)
+            } else ts.pendingDone = true
           } else if (idx >= 0) msg.setThinkingDone(idx)
           continue
         }
@@ -265,25 +288,21 @@ export function useStreamManager(
         if (event.type === 'plan') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
           _appendLog('decision', (event.data as string).slice(0, 80), 'supervisor')
-          const planText = event.data as string
-          const stepLines = planText.split('\n').filter(l => /^\s*[-*]\s*\w+:/.test(l))
-          for (const line of stepLines) {
-            const match = line.match(/^\s*[-*]\s*(\w+)\s*:\s*(.+)/)
-            if (match) {
-              const agent = match[1]; const subtask = match[2].trim()
-              if (!msg.taskItems.value.find(t => t.agent === agent && t.task === subtask)) {
-                msg.taskItems.value.push({ agent, task: subtask, status: 'pending' } as TaskUpdate)
-              }
+          const displayText = event.data as string
+          const planSteps = (event.steps || []) as Array<{ agent: string; task: string }>
+          for (const step of planSteps) {
+            if (!msg.taskItems.value.find(t => t.agent === step.agent && t.task === step.task)) {
+              msg.taskItems.value.push({ agent: step.agent, task: step.task, status: 'pending' } as TaskUpdate)
             }
           }
           const p = currentPhase.value as TaskPhaseUpdate | null
           currentPhase.value = {
             step: (p?.step ?? 0) + 1,
-            totalSteps: Math.max(p?.totalSteps ?? 0, stepLines.length || 1),
-            description: stepLines[0]?.replace(/^\s*[-*]\s*\w+:\s*/, '').slice(0, 60) || '',
+            totalSteps: Math.max(p?.totalSteps ?? 0, planSteps.length || 1),
+            description: planSteps[0]?.task?.slice(0, 60) || '',
           }
           const idx = msg.ensureAssistant('supervisor')
-          msg.messages.value[idx]!.content = planText
+          msg.messages.value[idx]!.content = displayText
           if (msg.messages.value[idx]!.isThinking) msg.messages.value[idx]!.isThinking = false
           _stopTypewriter()
         } else if (event.type === 'tool_call') {
@@ -346,6 +365,12 @@ export function useStreamManager(
           permissionRequest.value = event.data as PermissionRequest
         } else if (event.type === 'metrics') {
           msg.setMetrics(event.data as MetricsData)
+        } else if (event.type === 'interrupt') {
+          const d = event.data as { thread_id?: string; plan?: Record<string, unknown> | null }
+          if (d?.thread_id) {
+            pendingReview.value = { threadId: d.thread_id, plan: d.plan || null }
+            msg.addSystem('⏸ Plan 已生成，等待您的审核 (approve/revise/reject)')
+          }
         } else if (event.type === 'done') {
           // stream complete — let for-await exit naturally
         } else if (event.type === 'error') {
@@ -372,6 +397,115 @@ export function useStreamManager(
           }
         }
       }
+      isLoading.value = false
+      streamingActive.value = false
+      _processPendingMessages()
+    }
+  }
+
+  async function submitReview(decision: 'approve' | 'revise' | 'reject', feedback?: string) {
+    const review = pendingReview.value
+    if (!review) return
+    const sid = sessionId.value
+    if (!sid) return
+    pendingReview.value = null
+    _setSessionStatus('processing')
+    _appendLog('decision', `用户审核: ${decision}`, 'user')
+    try {
+      for await (const event of streamOrchestrateReview(sid, review.threadId, decision, feedback)) {
+        const agentName = event.agent_name || 'supervisor'
+        if (event.type === 'thinking_start') {
+          const idx = msg.ensureAssistant(agentName)
+          msg.setThinkingStart(idx)
+          msg.initThinkTypewriter(idx)
+          streamingActive.value = true
+        } else if (event.type === 'thinking') {
+          const idx = msg.ensureAssistant(agentName)
+          if (msg.thinkTypeState.value[idx]) {
+            msg.thinkTypeState.value[idx].full += (event.data as string)
+            _startTypewriter()
+          } else {
+            msg.appendThinking(idx, event.data as string)
+          }
+        } else if (event.type === 'thinking_done') {
+          const idx = msg.ensureAssistant(agentName)
+          if (idx >= 0 && msg.thinkTypeState.value[idx]) {
+            const ts = msg.thinkTypeState.value[idx]
+            if (ts.done) {
+              if (!msg.messages.value[idx]?.thinking && ts.full) {
+                msg.messages.value[idx]!.thinking = ts.full
+              }
+              msg.setThinkingDone(idx)
+            } else ts.pendingDone = true
+          } else if (idx >= 0) msg.setThinkingDone(idx)
+        } else if (event.type === 'plan') {
+          await new Promise(r => setTimeout(r, STEP_DELAY_MS))
+          _appendLog('decision', (event.data as string).slice(0, 80), agentName)
+          const displayText = event.data as string
+          const planSteps = (event.steps || []) as Array<{ agent: string; task: string }>
+          for (const step of planSteps) {
+            if (!msg.taskItems.value.find(t => t.agent === step.agent && t.task === step.task)) {
+              msg.taskItems.value.push({ agent: step.agent, task: step.task, status: 'pending' } as TaskUpdate)
+            }
+          }
+          const idx = msg.ensureAssistant(agentName)
+          msg.messages.value[idx]!.content = displayText
+          if (msg.messages.value[idx]!.isThinking) msg.messages.value[idx]!.isThinking = false
+          _stopTypewriter()
+        } else if (event.type === 'message') {
+          const idx = msg.ensureAssistant(agentName)
+          msg.appendContent(idx, event.data as string)
+        } else if (event.type === 'tool_call') {
+          await new Promise(r => setTimeout(r, STEP_DELAY_MS))
+          const idx = msg.ensureAssistant(agentName)
+          msg.setHandoff(idx, 'supervisor', agentName)
+          const tcs = event.data as Array<{ name: string; args: Record<string, unknown>; status?: string }>
+          _appendLog('tool_call', tcs[0]?.name || 'unknown', agentName)
+          msg.setAgentStatus(idx, 'working')
+          const resultTcs = tcs.filter(tc => tc.status === 'completed' || tc.status === 'result')
+          if (resultTcs.length > 0) {
+            msg.messages.value[idx]!.toolCalls = resultTcs as any
+            msg.clearCompletedToolCalls()
+          } else {
+            msg.messages.value[idx]!.toolCalls = tcs as any
+          }
+        } else if (event.type === 'summary') {
+          await new Promise(r => setTimeout(r, STEP_DELAY_MS))
+          _appendLog('summary', (event.data as string).slice(0, 80), agentName)
+          msg.pushSummary(agentName, event.data as string)
+        } else if (event.type === 'task_update') {
+          const update = event.data as TaskUpdate
+          const now = Date.now()
+          const existing = msg.taskItems.value.findIndex(t => t.agent === update.agent && t.task === update.task)
+          if (existing >= 0) {
+            msg.taskItems.value[existing] = { ...msg.taskItems.value[existing], ...update }
+          } else {
+            msg.taskItems.value.push({ ...update })
+          }
+        } else if (event.type === 'audit_summary') {
+          msg.setAuditSummary(event.data as string)
+        } else if (event.type === 'metrics') {
+          msg.setMetrics(event.data as MetricsData)
+        } else if (event.type === 'interrupt') {
+          const d = event.data as { thread_id?: string; plan?: Record<string, unknown> | null }
+          if (d?.thread_id) {
+            pendingReview.value = { threadId: d.thread_id, plan: d.plan || null }
+            msg.addSystem('⏸ Plan 已生成，等待您的审核 (approve/revise/reject)')
+          }
+        } else if (event.type === 'error') {
+          msg.addError(String(event.data))
+        } else if (event.type === 'permission_request') {
+          permissionRequest.value = event.data as PermissionRequest
+        } else if (event.type === 'done') {
+          // done
+        }
+      }
+    } catch (e: any) {
+      msg.addError(`Review submission error: ${e.message}`)
+    } finally {
+      _flushEventQueue()
+      msg.reconcileStreamEnd()
+      _setSessionStatus('completed')
       isLoading.value = false
       streamingActive.value = false
       _processPendingMessages()
@@ -411,7 +545,8 @@ export function useStreamManager(
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      while (true) {
+      let _acpDone = false
+      while (!_acpDone) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
@@ -444,6 +579,9 @@ export function useStreamManager(
               if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
             } else if (event.type === 'metrics') {
               msg.setMetrics(event.data as MetricsData)
+            } else if (event.type === 'done') {
+              _acpDone = true
+              break
             } else if (event.type === 'permission_request') {
               const data = event.data as PermissionRequest
               if (data) permissionRequest.value = data
@@ -571,7 +709,9 @@ export function useStreamManager(
   return {
     isLoading, streamingActive, thinkingChunks, eventLog,
     currentPhase, currentDispatch, pendingMessages, permissionRequest,
+    pendingReview,
     sendMessage, sendOrchestrate, sendACP, send, handleCompact,
+    submitReview,
     abort, abortAndSend, checkAcpAvailable,
   }
 }

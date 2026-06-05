@@ -38,6 +38,7 @@ metrics            ``data: dict`` (``{elapsed_ms, agent_calls, tokens}``,
                    ``tokens`` 是 ``{agent_name: {input, output, ms}}``)
 summary            ``data: str`` (多 agent 协同后的 LLM 综合摘要)
 audit_summary      ``data: str`` (审计摘要,包含各 Agent 审计结果)
+interrupt          ``data: dict`` (``{thread_id, plan}``,等待用户审核的 plan)
 error              ``data: str`` (错误消息,通常是异常文本)
 done               (无其它字段,流结束的标志)
 ================  ==========================================================
@@ -79,6 +80,12 @@ class EventType:
     METRICS: Final[str] = "metrics"  # 性能 / 计量数据
     ERROR: Final[str] = "error"  # 错误消息
 
+    # ── 权限请求 (1 个) ────────────────────────────────────────────
+    PERMISSION_REQUEST: Final[str] = "permission_request"  # ACP agent 请求用户授权
+
+    # ── 中断事件 (1 个) ───────────────────────────────────────────
+    INTERRUPT: Final[str] = "interrupt"  # 等待用户审核,``data`` 是 {thread_id, plan}
+
     # ── 流结束 (1 个) ────────────────────────────────────────────
     DONE: Final[str] = "done"  # 流终止,后续不会有任何事件
 
@@ -89,7 +96,9 @@ class EventType:
             cls.THINKING_START, cls.THINKING, cls.THINKING_DONE,
             cls.PLAN, cls.MESSAGE, cls.TOOL_CALL, cls.TASK_UPDATE,
             cls.AUDIT_SUMMARY,
-            cls.SUMMARY, cls.METRICS, cls.ERROR, cls.DONE,
+            cls.SUMMARY, cls.METRICS, cls.ERROR,
+            cls.PERMISSION_REQUEST,
+            cls.INTERRUPT, cls.DONE,
         }
 
 
@@ -149,9 +158,14 @@ def make_thinking_done(agent_name: str) -> dict[str, Any]:
     return make_event(EventType.THINKING_DONE, agent_name=agent_name)
 
 
-def make_plan(agent_name: str, plan_text: str) -> dict[str, Any]:
-    """构造 ``plan`` 事件,``data`` 是计划文本 (可被前端解析为步骤)。"""
-    return make_event(EventType.PLAN, agent_name=agent_name, data=plan_text)
+def make_plan(agent_name: str, plan_text: str, **extra: Any) -> dict[str, Any]:
+    """构造 ``plan`` 事件,``data`` 是计划文本 (Markdown 格式的可读展示)。
+
+    ``extra`` 可用于附加结构化字段,例如 ``steps=[{agent, task}]``。
+    """
+    evt = make_event(EventType.PLAN, agent_name=agent_name, data=plan_text)
+    evt.update(extra)
+    return evt
 
 
 def make_message(
@@ -199,6 +213,16 @@ def make_task_update(
     payload: dict[str, Any] = {"agent": task_agent, "task": task, "status": status}
     payload.update(extra)
     return make_event(EventType.TASK_UPDATE, agent_name=agent_name, data=payload)
+
+
+def make_interrupt(agent_name: str | None = None, data: dict | None = None) -> dict[str, Any]:
+    """构造 ``interrupt`` 事件,``data`` 包含 ``{thread_id, plan}``。"""
+    return make_event(EventType.INTERRUPT, agent_name=agent_name, data=data)
+
+
+def make_permission_request(agent_name: str | None = None, data: dict | None = None) -> dict[str, Any]:
+    """构造 ``permission_request`` 事件,``data`` 包含 ``{req_id, toolCall, options, agent_id}``。"""
+    return make_event(EventType.PERMISSION_REQUEST, agent_name=agent_name, data=data)
 
 
 def make_audit_summary(agent_name: str, data: str) -> dict[str, Any]:

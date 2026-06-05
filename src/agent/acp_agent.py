@@ -12,6 +12,7 @@ from typing import Any
 from src.agent.acp_client import ACPClient
 from src.agent.config_manager import get_config_manager
 from src.agent.db import get_acp_session_id, update_acp_session_id
+from src.agent.events import make_permission_request
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ class ACPAgent:
                 elif acp_event.type == "permission_request":
                     data = acp_event.data if isinstance(acp_event.data, dict) else {}
                     data["agent_id"] = self.agent_id
-                    yield {"type": "permission_request", "data": data, "agent_name": self.agent_id}
+                    yield make_permission_request(agent_name=self.agent_id, data=data)
                 elif acp_event.type == "error":
                     yield {"type": "error", "data": str(acp_event.data), "agent_name": self.agent_id}
                 elif acp_event.type == "done":

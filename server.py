@@ -27,6 +27,7 @@ from src.agent.db import (
     delete_task_updates_for_sessions,
     get_session_summary,
     get_audit_summary,
+    get_session_project_path,
     save_audit_summary,
     get_tool_usage_stats,
     load_history,
@@ -134,6 +135,13 @@ class CompactRequest(BaseModel):
     session_id: str
 
 
+class ReviewPlanRequest(BaseModel):
+    session_id: str
+    thread_id: str
+    decision: str
+    feedback: str = ""
+
+
 class CreateSessionRequest(BaseModel):
     title: str | None = None
     project_path: str | None = None
@@ -237,6 +245,134 @@ async def _passthrough(source):
         yield {"type": "thinking", "data": thinking_buf, **thinking_meta}
     if message_buf:
         yield {"type": "message", "data": message_buf, **message_meta}
+
+
+# ── Shared Orchestrate Stream Wrapper ──────────────────────────
+
+
+async def _orchestrate_stream(
+    event_source,
+    session_id: str,
+    user_message: str,
+    _start_time: float,
+):
+    """Non-batched wrap of orchestrator generator with persistence.
+
+    Same persistence logic as /api/orchestrate inline stream(), but
+    accepts any async generator — supports both run() and resume().
+    """
+    _message_accum = ""
+    _thinking_accum = ""
+    _agent_name = "supervisor"
+    _user_saved = False
+    _sse_idx = 0
+    _finally_done = False
+
+    def _save_accumulated():
+        nonlocal _message_accum, _thinking_accum
+        if _message_accum and _message_accum.strip():
+            if not is_punctuation_only(_message_accum) and len(_message_accum.strip()) >= 3:
+                try:
+                    save_message(
+                        session_id, "ai", _message_accum,
+                        thinking=_thinking_accum or "",
+                        name=_agent_name,
+                    )
+                except Exception as save_err:
+                    logger.warning("[ORCH] save_message failed: %s", save_err)
+        _message_accum = ""
+        _thinking_accum = ""
+
+    try:
+        async for event in _passthrough(event_source):
+            event["session_id"] = session_id
+            _sse_idx += 1
+            _agent_name = event.get("agent_name", "supervisor")
+            etype = event.get("type", "")
+            payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            try:
+                if not _user_saved and user_message:
+                    save_message(session_id, "human", user_message)
+                    _user_saved = True
+
+                if etype == "message":
+                    _message_accum += event.get("data", "") or ""
+                elif etype == "thinking":
+                    _thinking_accum += event.get("data", "") or ""
+                elif etype == "thinking_done":
+                    pass
+                elif etype == "plan":
+                    _save_accumulated()
+                    try:
+                        save_message(session_id, "ai", event.get("data", ""), name="plan")
+                    except Exception as save_err:
+                        logger.warning("[ORCH] save plan failed: %s", save_err)
+                elif etype == "tool_call":
+                    tcs = event.get("data", []) or []
+                    if tcs:
+                        tc_json = json.dumps(tcs, ensure_ascii=False)
+                        try:
+                            save_message(session_id, "ai", "", tool_calls=tc_json, name=_agent_name)
+                        except Exception as save_err:
+                            logger.warning("[ORCH] save tool_call failed: %s", save_err)
+                elif etype == "task_update":
+                    tu = event.get("data", {}) or {}
+                    try:
+                        save_task_update(
+                            session_id,
+                            agent=tu.get("agent", ""),
+                            task=tu.get("task", ""),
+                            status=tu.get("status", "pending"),
+                            state=tu.get("state"),
+                            started_at=tu.get("started_at"),
+                            ended_at=tu.get("ended_at"),
+                            elapsed_ms=tu.get("elapsed_ms"),
+                        )
+                    except Exception as save_err:
+                        logger.warning("[ORCH] save_task_update failed: %s", save_err)
+                elif etype == "summary":
+                    _save_accumulated()
+                    try:
+                        save_message(
+                            session_id, "ai", event.get("data", ""),
+                            thinking=_thinking_accum or None,
+                            name="summary",
+                        )
+                    except Exception as save_err:
+                        logger.warning("[ORCH] save summary failed: %s", save_err)
+                elif etype == "audit_summary":
+                    try:
+                        save_audit_summary(session_id, event.get("data", "") or "")
+                    except Exception as save_err:
+                        logger.warning("[ORCH] save_audit_summary failed: %s", save_err)
+                elif etype == "metrics":
+                    try:
+                        save_metrics(session_id, json.dumps(event.get("data", {}), ensure_ascii=False))
+                    except Exception as save_err:
+                        logger.warning("[ORCH] save_metrics failed: %s", save_err)
+                elif etype == "done":
+                    _finally_done = True
+            except Exception as save_err:
+                logger.warning("[ORCH] persistence failed: %s", save_err)
+
+            yield payload
+            await asyncio.sleep(0)
+
+        _save_accumulated()
+        if not _finally_done:
+            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+    except Exception as e:
+        logger.error("[ORCH] stream error: %s", e, exc_info=True)
+        _save_accumulated()
+        yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
+    finally:
+        _save_accumulated()
+        reconcile_session_tasks(session_id)
+        duration_ms = int((time.time() - _start_time) * 1000)
+        update_session_status(session_id, "completed")
+        update_session_duration(session_id, duration_ms)
+        logger.info("[ORCH] session=%s completed: %d events, %dms", session_id, _sse_idx, duration_ms)
 
 
 # ── Chat ────────────────────────────────────────────────────────
@@ -413,120 +549,31 @@ async def orchestrate(request: OrchestrateRequest):
     history = load_history_with_meta(session_id)
     session_summary = get_session_summary(session_id)
 
-    async def stream():
-        _message_accum = ""
-        _thinking_accum = ""
-        _agent_name = "supervisor"
-        _user_saved = False
-        _sse_idx = 0
-
-        def _save_accumulated():
-            nonlocal _message_accum, _thinking_accum
-            if _message_accum and _message_accum.strip():
-                if not is_punctuation_only(_message_accum) and len(_message_accum.strip()) >= 3:
-                    try:
-                        save_message(
-                            session_id, "ai", _message_accum,
-                            thinking=_thinking_accum or "",
-                            name=_agent_name,
-                        )
-                    except Exception as save_err:
-                        logger.warning("[ORCH] save_message failed: %s", save_err)
-            _message_accum = ""
-            _thinking_accum = ""
-
-        try:
-            async for event in _passthrough(
-                orchestrator.run(request.task, history=history or None, summary=session_summary)
-            ):
-                event["session_id"] = session_id
-                _sse_idx += 1
-                _agent_name = event.get("agent_name", "supervisor")
-                etype = event.get("type", "")
-                payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-                try:
-                    if not _user_saved:
-                        save_message(session_id, "human", request.task)
-                        _user_saved = True
-
-                    if etype == "message":
-                        _message_accum += event.get("data", "") or ""
-                    elif etype == "thinking":
-                        _thinking_accum += event.get("data", "") or ""
-                    elif etype == "thinking_done":
-                        pass
-                    elif etype == "plan":
-                        _save_accumulated()
-                        try:
-                            save_message(session_id, "ai", event.get("data", ""), name="plan")
-                        except Exception as save_err:
-                            logger.warning("[ORCH] save plan failed: %s", save_err)
-                    elif etype == "tool_call":
-                        tcs = event.get("data", []) or []
-                        if tcs:
-                            tc_json = json.dumps(tcs, ensure_ascii=False)
-                            try:
-                                save_message(session_id, "ai", "", tool_calls=tc_json, name=_agent_name)
-                            except Exception as save_err:
-                                logger.warning("[ORCH] save tool_call failed: %s", save_err)
-                    elif etype == "task_update":
-                        tu = event.get("data", {}) or {}
-                        try:
-                            save_task_update(
-                                session_id,
-                                agent=tu.get("agent", ""),
-                                task=tu.get("task", ""),
-                                status=tu.get("status", "pending"),
-                                state=tu.get("state"),
-                                started_at=tu.get("started_at"),
-                                ended_at=tu.get("ended_at"),
-                                elapsed_ms=tu.get("elapsed_ms"),
-                            )
-                        except Exception as save_err:
-                            logger.warning("[ORCH] save_task_update failed: %s", save_err)
-                    elif etype == "summary":
-                        _save_accumulated()
-                        try:
-                            save_message(
-                                session_id, "ai", event.get("data", ""),
-                                thinking=_thinking_accum or None,
-                                name="summary",
-                            )
-                        except Exception as save_err:
-                            logger.warning("[ORCH] save summary failed: %s", save_err)
-                    elif etype == "audit_summary":
-                        try:
-                            save_audit_summary(session_id, event.get("data", "") or "")
-                        except Exception as save_err:
-                            logger.warning("[ORCH] save_audit_summary failed: %s", save_err)
-                    elif etype == "metrics":
-                        try:
-                            save_metrics(session_id, json.dumps(event.get("data", {}), ensure_ascii=False))
-                        except Exception as save_err:
-                            logger.warning("[ORCH] save_metrics failed: %s", save_err)
-                except Exception as save_err:
-                    logger.warning("[ORCH] persistence failed: %s", save_err)
-
-                yield payload
-                await asyncio.sleep(0)
-
-            _save_accumulated()
-            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
-        except Exception as e:
-            logger.error("[ORCH] stream error: %s", e, exc_info=True)
-            _save_accumulated()
-            yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
-        finally:
-            _save_accumulated()
-            reconcile_session_tasks(session_id)
-            duration_ms = int((time.time() - _start_time) * 1000)
-            update_session_status(session_id, "completed")
-            update_session_duration(session_id, duration_ms)
-            logger.info("[ORCH] session=%s completed: %d events, %dms", session_id, _sse_idx, duration_ms)
-
     return StreamingResponse(
-        stream(),
+        _orchestrate_stream(
+            orchestrator.run(request.task, history=history or None, summary=session_summary),
+            session_id=session_id,
+            user_message=request.task,
+            _start_time=_start_time,
+        ),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@app.post("/api/orchestrate/{session_id}/review")
+async def review_plan(session_id: str, request: ReviewPlanRequest):
+    """提交审核决策（approve/revise/reject），恢复被中断的 graph。"""
+    orchestrator = get_supervisor()
+    update_session_status(session_id, "processing")
+    _start_time = time.time()
+    return StreamingResponse(
+        _orchestrate_stream(
+            orchestrator.resume(request.thread_id, request.decision, request.feedback),
+            session_id=session_id,
+            user_message="",
+            _start_time=_start_time,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -591,6 +638,7 @@ async def get_session(session_id: str):
         "task_phases": [],
         "metrics": metrics,
         "audit_summary": audit_summary,
+        "project_path": get_session_project_path(session_id),
     }
 
 
@@ -844,6 +892,8 @@ async def list_tools():
             "description": cfg.get("desc", ""),
             "type": cfg.get("category", "Core"),
             "icon": cfg.get("icon", "⚙"),
+            "category": cfg.get("category", "Core"),
+            "enabled": cfg.get("enabled", True),
             "usage": 0,
             "lastUsed": None,
         })

@@ -7,6 +7,8 @@
  * - streamOrchestrate → 异步迭代器风格 (/api/orchestrate 端点)
  */
 
+import type { SSEEvent } from './types'
+
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 /**
@@ -17,7 +19,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || ''
  */
 export function streamChatCallbacks(
   message: string,
-  onEvent: (event: Record<string, unknown>) => void,
+  onEvent: (event: SSEEvent) => void,
   onDone: () => void,
   sessionId?: string,
 ): { abort: () => void } {
@@ -79,7 +81,7 @@ export function streamChatCallbacks(
  * 异步迭代器风格的 POST /chat SSE 流式请求。
  * 每次 `for await (const event of streamChatFetch(...))` 消费一个事件。
  */
-export async function* streamChatFetch(message: string, sessionId?: string): AsyncGenerator<Record<string, unknown>> {
+export async function* streamChatFetch(message: string, sessionId?: string): AsyncGenerator<SSEEvent> {
   const url = `${API_BASE}/chat`
   const t0 = performance.now()
 
@@ -119,12 +121,49 @@ export async function* streamChatFetch(message: string, sessionId?: string): Asy
  * 异步迭代器风格的 POST /api/orchestrate SSE 流式请求。
  * 用于多智能体编排场景 (Supervisor → Worker)。
  */
-export async function* streamOrchestrate(task: string, sessionId?: string): AsyncGenerator<Record<string, unknown>> {
+export async function* streamOrchestrate(task: string, sessionId?: string): AsyncGenerator<SSEEvent> {
   const url = `${API_BASE}/api/orchestrate`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task, session_id: sessionId }),
+  })
+
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try { yield JSON.parse(line.slice(6)) } catch {}
+      }
+    }
+  }
+}
+
+/**
+ * POST /api/orchestrate/:sessionId/review SSE 流式请求。
+ * 用户提交 approve/revise/reject 后，stream 恢复并继续。
+ */
+export async function* streamOrchestrateReview(
+  sessionId: string,
+  threadId: string,
+  decision: string,
+  feedback?: string,
+): AsyncGenerator<SSEEvent> {
+  const url = `${API_BASE}/api/orchestrate/${sessionId}/review`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, thread_id: threadId, decision, feedback: feedback || '' }),
   })
 
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)

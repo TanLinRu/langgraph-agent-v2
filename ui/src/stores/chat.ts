@@ -68,7 +68,10 @@ export const useChatStore = defineStore('chat', () => {
           const chatMsg: import('../utils/api').ChatMessage = {
             role: 'assistant', content: m.content || '',
           }
-          if (hasThinking) chatMsg.thinking = (m as any).thinking
+          if (hasThinking) {
+            chatMsg.thinking = (m as any).thinking
+            chatMsg.thinkingDone = true
+          }
           if (hasToolCalls) chatMsg.toolCalls = (m as any).tool_calls
           if (isPlan) chatMsg.isPlan = true
           else if (isSummary) chatMsg.isSummary = true
@@ -97,6 +100,12 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (data.audit_summary) {
         msg.setAuditSummary(data.audit_summary)
+      }
+      if (data.project_path) {
+        const existing = sessionsStore.getSessionById(sessionId.value)
+        if (existing && !existing.project_path) {
+          existing.project_path = data.project_path
+        }
       }
     } catch (e: any) {
       if (e.message?.includes('404') || e.message?.includes('Not Found')) {
@@ -145,6 +154,8 @@ export const useChatStore = defineStore('chat', () => {
     currentDispatch: stream.currentDispatch,
     pendingMessages: stream.pendingMessages,
     permissionRequest: stream.permissionRequest,
+    pendingReview: stream.pendingReview,
+    submitReview: stream.submitReview,
     // Session
     sessionId,
     // 方法

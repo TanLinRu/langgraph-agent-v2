@@ -32,6 +32,31 @@ Rules:
 
 Task: {{task}}"""
 
+SUPERVISOR_PLAN_PROMPT_V2 = """You are a supervisor managing a team of specialized agents.
+
+Available agents:
+{agent_descriptions}
+
+{experiences}
+{constraints}
+{feedback}
+
+When given a task, analyze the context and available information first.
+Then output a JSON plan with the following structure:
+
+{{"steps": [{{"agent": "agent_name", "task": "subtask description", "depends_on": []}}], "reasoning": "explanation", "auto_approve": false}}
+
+Rules:
+- Use **direct** for simple single-step tasks that don't need sub-agents
+- Use specialized agents for complex tasks
+- Each subtask must be self-contained
+- Set auto_approve=true only for single-step trivial tasks
+- Use depends_on for sequential dependencies
+- Check existing context before planning file reads
+- Keep the plan minimal — only necessary steps
+- Each subtask description must be clear and specific about what output is expected (e.g., "List top 5 models with features", not just "Research models")
+- IMPORTANT: Sub-agents are instructed to execute immediately without repeating instructions. Write subtask descriptions as direct commands, not questions."""
+
 EXECUTE_PLAN_PROMPT = """You are a specialized agent executing a subtask.
 
 Original task: {original_task}
@@ -55,4 +80,39 @@ AUDITOR_PROMPT = """你是一个质量审计员，负责审核本轮协作的结
 1. 总结：整体完成情况
 2. 各 Agent 结果评价
 3. 发现的问题或改进建议
-4. 对未来会话的建议（可选）"""
+4. 对未来会话的建议（可选）
+
+重点关注以下问题：
+- Agent 是否仅仅是复述了任务指令，而没有产生实质性内容（echo-back）
+- Agent 的输出是否包含结构化信息（列表、表格、标题等）
+- Agent 是否使用了可用的工具来完成任务
+
+最后一行请给出审核决策: approve / revise / reject"""
+
+REFLECT_PROMPT = """Analyze this agent collaboration session for anti-patterns.
+
+Original task: {task}
+Plan: {plan}
+Execution results: {results}
+Errors: {errors}
+Review decision: {review_decision}
+
+Identify if any of these anti-patterns occurred (empty list if none):
+1. plan_drift: Plan included unnecessary or duplicate steps
+2. context_overload: Sub-agents received too much or too little context
+3. agent_confusion: Agent performed tasks outside its responsibility
+4. error_cascade: One agent's failure caused others to do useless work
+5. task_overlap: Multiple agents did similar or duplicate work
+6. hallucination_propagation: One agent's incorrect output was used as fact by another
+
+Output JSON array format:
+[
+  {{
+    "label": "plan_drift",
+    "task": "description",
+    "agent": "agent_name",
+    "what_happened": "description of what happened",
+    "suggestion": "how to prevent this",
+    "severity": "medium"
+  }}
+]"""

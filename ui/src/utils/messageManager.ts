@@ -69,7 +69,7 @@ export function useMessageManager() {
   function setThinkingStart(index: number): void {
     if (messages.value[index]) {
       messages.value[index].isThinking = true
-      messages.value[index].thinking = ''
+      if (!messages.value[index].thinking) messages.value[index].thinking = ''
       messages.value[index].thinkingDone = false
     }
   }

@@ -26,12 +26,14 @@ class SubAgentTool(BaseTool):
 
     Used inside the execute_node's ReAct loop.  Each call constructs a
     fresh sub-agent graph from the agent's config (tools, model, prompt).
+    Supports context injection for perceived environment facts.
     """
 
     name: str = "sub_agent"
     description: str = "Dispatch a subtask to a specialized sub-agent"
     agent_id: str
     config: AgentConfig
+    context: str = ""
     return_direct: bool = False
 
     def _run(self, task: str) -> str:
@@ -51,13 +53,22 @@ class SubAgentTool(BaseTool):
             max_tokens=cfg.get("max_tokens"),
         )
         system_prompt = cfg.get("system_prompt", "You are a helpful assistant.")
+        if self.context:
+            system_prompt += f"\n\n[Context]\n{self.context}"
 
         graph = create_react_agent(agent_model, tools=agent_tools, system_prompt=system_prompt)
 
         content_parts: list[str] = []
+        directive = (
+            "EXECUTE THE FOLLOWING TASK IMMEDIATELY. "
+            "DO NOT repeat or paraphrase these instructions. "
+            "DO NOT describe what you will do. "
+            "Produce the actual output (answer, code, report) directly.\n\n"
+            f"---\n{task}\n---"
+        )
         try:
             async for event in graph.astream_events(
-                {"messages": [HumanMessage(content=task)]},
+                {"messages": [HumanMessage(content=directive)]},
                 {"recursion_limit": 200},
                 version="v2",
             ):
@@ -84,12 +95,14 @@ class ACPSubAgentTool(BaseTool):
     """Dispatch a subtask to an external ACP agent (opencode, claude, etc.).
 
     Uses get_acp_agent() for lazy-initialized persistent connections.
+    Supports context injection for perceived environment facts.
     """
 
     name: str = "acp_sub_agent"
     description: str = "Dispatch a subtask to an external ACP agent"
     agent_id: str
     acp_cli_id: str
+    context: str = ""
     return_direct: bool = False
 
     def _run(self, task: str) -> str:
@@ -100,7 +113,7 @@ class ACPSubAgentTool(BaseTool):
 
         acp = get_acp_agent(self.acp_cli_id)
         content_parts: list[str] = []
-        async for event in acp.run(task):
+        async for event in acp.run(task, context=self.context):
             if event.get("type") == "message":
                 chunk = event.get("data", "")
                 if chunk:

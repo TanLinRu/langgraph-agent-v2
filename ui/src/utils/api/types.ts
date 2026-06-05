@@ -164,3 +164,30 @@ export interface BrowseNode {
   size?: number
   children?: BrowseNode[]
 }
+
+/** SSE 事件类型枚举 */
+export type SSEEventType =
+  | 'thinking_start'
+  | 'thinking'
+  | 'thinking_done'
+  | 'tool_call'
+  | 'message'
+  | 'summary'
+  | 'error'
+  | 'done'
+  | 'plan'
+  | 'task_update'
+  | 'audit_summary'
+  | 'permission_request'
+  | 'metrics'
+  | 'interrupt'
+
+/** SSE 事件结构 */
+export interface SSEEvent {
+  type: SSEEventType
+  data?: unknown
+  session_id?: string
+  agent_name?: string
+  file_refs?: string[]
+  steps?: Array<{ agent: string; task: string }>
+}
