@@ -256,14 +256,17 @@ class Orchestrator:
         valid_agents = set(self.sub_agents.keys()) | set(self.acp_agents.keys())
         results: dict[str, AgentResult] = {}
         errors: list[str] = []
-        step_map = {s.agent: s for s in tasks}
+        # depends_on are step indices (e.g. "0", "1"), not agent names
+        step_index_map = {str(i): s for i, s in enumerate(tasks)}
 
         def _build_step_context(step: Step) -> str:
-            """Collect upstream dependency results + global history into one context block."""
             dep_parts: list[str] = []
             for dep_idx in step.depends_on:
-                dep_name = step_map.get(dep_idx)
-                dep_result = results.get(dep_name) if dep_name else None
+                dep_step = step_index_map.get(dep_idx)
+                if not dep_step:
+                    continue
+                dep_name = dep_step.agent
+                dep_result = results.get(dep_name)
                 if dep_result and dep_result.result:
                     snippet = (dep_result.result[:2000] + "...") if len(dep_result.result) > 2000 else dep_result.result
                     dep_parts.append(
@@ -346,31 +349,30 @@ class Orchestrator:
             )
             return AgentResult(agent=agent_name, task=step.task, result=result_text, elapsed_ms=elapsed)
 
-        # Build DAG from depends_on
-        executed: set[str] = set()
-        while len(executed) < len(tasks):
-            batch = []
-            for s in tasks:
-                if s.agent in executed:
+        # Build DAG from depends_on (indices "0", "1", ...)
+        executed_indices: set[str] = set()
+        while len(executed_indices) < len(tasks):
+            batch: list[tuple[int, Step]] = []
+            for i, s in enumerate(tasks):
+                idx = str(i)
+                if idx in executed_indices:
                     continue
-                deps = s.depends_on
-                if all(d in executed for d in deps):
-                    batch.append(s)
+                if all(d in executed_indices for d in s.depends_on):
+                    batch.append((i, s))
             if not batch:
-                # Circular dependency or unknown deps — execute remaining in order
-                batch = [s for s in tasks if s.agent not in executed]
+                batch = [(i, s) for i, s in enumerate(tasks) if str(i) not in executed_indices]
                 if not batch:
                     break
 
-            batch_results = await asyncio.gather(*[_run_step(s) for s in batch], return_exceptions=True)
-            for r in batch_results:
+            batch_results = await asyncio.gather(*[_run_step(s) for _, s in batch], return_exceptions=True)
+            for (idx, step), r in zip(batch, batch_results):
                 if isinstance(r, Exception):
                     errors.append(str(r))
                 elif isinstance(r, AgentResult):
                     results[r.agent] = r
                     if r.error:
                         errors.append(f"{r.agent}: {r.error}")
-                    executed.add(r.agent)
+                    executed_indices.add(str(idx))
 
         return {"results": results, "errors": errors}
 

@@ -382,18 +382,23 @@ export function useStreamManager(
       msg.addError(`Connection error: ${e.message}`)
     } finally {
       _flushEventQueue()
-      msg.reconcileStreamEnd()
+      // HITL interrupt: don't mark pending tasks as failed (they'll resume)
+      if (!pendingReview.value) {
+        msg.reconcileStreamEnd()
+      }
       _setSessionStatus('completed')
-      const failedAgents = new Set(
-        msg.taskItems.value.filter(t => t.status === 'failed').map(t => t.agent)
-      )
-      for (let i = 0; i < msg.messages.value.length; i++) {
-        const m = msg.messages.value[i]
-        if (m?.role === 'assistant') {
-          if (m.agentName && failedAgents.has(m.agentName)) {
-            msg.setAgentStatus(i, 'failed')
-          } else {
-            msg.setAgentStatus(i, 'done')
+      if (!pendingReview.value) {
+        const failedAgents = new Set(
+          msg.taskItems.value.filter(t => t.status === 'failed').map(t => t.agent)
+        )
+        for (let i = 0; i < msg.messages.value.length; i++) {
+          const m = msg.messages.value[i]
+          if (m?.role === 'assistant') {
+            if (m.agentName && failedAgents.has(m.agentName)) {
+              msg.setAgentStatus(i, 'failed')
+            } else {
+              msg.setAgentStatus(i, 'done')
+            }
           }
         }
       }
