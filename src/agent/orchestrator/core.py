@@ -170,13 +170,17 @@ class Orchestrator:
 
         node_start = time.time()
         plan_text = ""
+        thinking_accum = ""
+        await self.queue.put(make_thinking("supervisor", "正在生成执行计划..."))
         for i, m in enumerate(messages):
             logger.info("[LLM] supervisor plan messages[%d] (%s): %.2000s",
                          i, m.get("role", "?"), m.get("content", ""))
         async for chunk in self.model.astream(messages):
             reasoning = chunk.additional_kwargs.get("reasoning_content")
             if reasoning:
-                await self.queue.put(make_thinking("supervisor", reasoning))
+                thinking_accum += reasoning
+                reasoning_text = "".join(thinking_accum.split(".")[-2:]) if "." in thinking_accum else thinking_accum
+                await self.queue.put(make_thinking("supervisor", reasoning_text[:500]))
             if chunk.content:
                 plan_text += chunk.content
         logger.info("[LLM] supervisor plan response (%d chars): %.2000s", len(plan_text), plan_text)
@@ -220,7 +224,10 @@ class Orchestrator:
 
         if plan is None:
             steps = self._parse_plan_fallback(plan_text)
-            plan = Plan(steps=steps, reasoning=plan_text)
+            import re as _re
+            m = _re.search(r'"reasoning"\s*:\s*"([^"]+)"', plan_text)
+            reasoning = m.group(1) if m else ""
+            plan = Plan(steps=steps, reasoning=reasoning)
 
         plan_display = self._format_plan_display(plan)
         await self.queue.put(make_plan(

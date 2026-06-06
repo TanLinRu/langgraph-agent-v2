@@ -64,7 +64,9 @@ For comparison / technical evaluation tasks, ALL comparison reports MUST include
   4. Source attribution for all data points
   5. A verifier step (agent="verifier") after research steps to fact-check claims before final output
 
-Each agent's task description must specify exactly what output format is expected (e.g., "Output a markdown table with columns: Name, GitHub Stars, Architecture, Strengths, Weaknesses")."""
+Each agent's task description must specify exactly what output format is expected (e.g., "Output a markdown table with columns: Name, GitHub Stars, Architecture, Strengths, Weaknesses").
+
+IMPORTANT: All plan step descriptions and reasoning must be in Chinese."""
 
 EXECUTE_PLAN_PROMPT = """You are a specialized agent executing a subtask.
 

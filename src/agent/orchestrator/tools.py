@@ -22,6 +22,17 @@ from src.agent.tools import get_tools
 logger = logging.getLogger(__name__)
 
 
+_TRUNCATION_SUFFIXES = ("。", ".", "!", "?", "```", "\n\n", ")", "】", "」", "》")
+
+
+def _is_truncated(text: str) -> bool:
+    """Check if output appears truncated mid-stream (no sentence-ending punctuation)."""
+    text = text.rstrip()
+    if not text:
+        return True
+    return not any(text.endswith(s) for s in _TRUNCATION_SUFFIXES)
+
+
 class SubAgentTool(BaseTool):
     """Invoke a local sub-agent built via create_react_agent.
 
@@ -66,7 +77,9 @@ class SubAgentTool(BaseTool):
 
         graph = create_react_agent(agent_model, tools=agent_tools, prompt=system_prompt)
 
-        content_parts: list[str] = []
+        _max_retries = 1
+        _attempt = 0
+        result = ""
         directive = (
             "EXECUTE THE FOLLOWING TASK IMMEDIATELY. "
             "DO NOT repeat or paraphrase these instructions. "
@@ -74,26 +87,44 @@ class SubAgentTool(BaseTool):
             "Produce the actual output (answer, code, report) directly.\n\n"
             f"---\n{task}\n---"
         )
-        _start = time.time()
-        try:
-            async for event in graph.astream_events(
-                {"messages": [HumanMessage(content=directive)]},
-                {"recursion_limit": 200},
-                version="v2",
-            ):
-                kind = event["event"]
-                if kind == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    if chunk.content:
-                        content_parts.append(chunk.content)
-        except Exception as e:
-            logger.error("[SubAgent] %s error: %s", self.agent_id, e)
-            return f"Agent error: {e}"
 
-        elapsed = int((time.time() - _start) * 1000)
-        result = "".join(content_parts)
-        logger.info("[SubAgent] %s response — %d chars in %dms",
-                     self.agent_id, len(result), elapsed)
+        while _attempt <= _max_retries:
+            content_parts: list[str] = []
+            _start = time.time()
+            try:
+                async for event in graph.astream_events(
+                    {"messages": [HumanMessage(content=directive)]},
+                    {"recursion_limit": 200},
+                    version="v2",
+                ):
+                    kind = event["event"]
+                    if kind == "on_chat_model_stream":
+                        chunk = event["data"]["chunk"]
+                        if chunk.content:
+                            content_parts.append(chunk.content)
+            except Exception as e:
+                logger.error("[SubAgent] %s error (attempt %d): %s", self.agent_id, _attempt, e)
+                return f"Agent error: {e}"
+
+            elapsed = int((time.time() - _start) * 1000)
+            result = "".join(content_parts)
+            logger.info("[SubAgent] %s response — %d chars in %dms (attempt %d)",
+                         self.agent_id, len(result), elapsed, _attempt)
+
+            if _attempt < _max_retries and _is_truncated(result):
+                logger.info("[SubAgent] %s output truncated, retrying...", self.agent_id)
+                directive = (
+                    "Continue from where you left off. "
+                    "DO NOT repeat the earlier part. "
+                    "DO NOT describe what you will do. "
+                    "Complete the remaining content immediately.\n\n"
+                    f"---\n{task}\n---\n\n"
+                    f"Previous output (incomplete):\n{result[-500:]}"
+                )
+                _attempt += 1
+            else:
+                break
+
         logger.info("[SubAgent] %s response: %.1000s", self.agent_id, result)
         return result
 
