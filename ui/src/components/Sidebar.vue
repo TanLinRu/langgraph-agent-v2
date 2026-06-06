@@ -235,6 +235,7 @@ function handleDelete(sessionId: string, e: Event) {
               min-width 0.3s cubic-bezier(0.16,1,0.3,1),
               opacity 0.3s ease;
   animation: slideIn 0.5s cubic-bezier(0.16,1,0.3,1) both;
+  box-shadow: 4px 0 20px rgba(0,0,0,0.05);
 }
 .sidebar.collapsed {
   width: 0 !important; min-width: 0 !important;
@@ -253,6 +254,14 @@ function handleDelete(sessionId: string, e: Event) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  position: relative;
+}
+.sidebar-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 20px; right: 20px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-accent), transparent);
 }
 .sidebar-header-actions {
   display: flex; align-items: center; gap: 4px;
@@ -276,6 +285,16 @@ function handleDelete(sessionId: string, e: Event) {
   background: linear-gradient(135deg, #e0e7ff, #818cf8);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  position: relative;
+}
+.sidebar-title::after {
+  content: '';
+  position: absolute;
+  bottom: -2px; left: 0;
+  width: 30%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+  border-radius: 1px;
 }
 [data-theme="light"] .sidebar-title {
   background: linear-gradient(135deg, #6366f1, #4f46e5);
@@ -285,7 +304,7 @@ function handleDelete(sessionId: string, e: Event) {
 .sidebar-sub {
   font-size: 14px;
   color: var(--text-tertiary);
-  margin-top: 4px;
+  margin-top: 8px;
   letter-spacing: 0.02em;
 }
 
@@ -347,21 +366,41 @@ function handleDelete(sessionId: string, e: Event) {
 /* Conversation list */
 .conv-list { flex: 1; overflow-y: auto; padding: 0 6px; }
 .conv-item-wrap {
-  position: relative; overflow: hidden; margin: 3px 6px; border-radius: 10px;
+  position: relative; overflow: hidden; margin: 4px 6px; border-radius: 12px;
 }
 .conv-item {
   position: relative; z-index: 2;
   display: flex; align-items: center; gap: 14px;
-  padding: 14px 16px; cursor: pointer; transition: all 0.2s;
+  padding: 14px 16px; cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border-left: 3px solid transparent;
-  border-radius: 10px; background: transparent;
+  border-radius: 12px; 
+  background: var(--bg-glass);
+  border: 1px solid transparent;
 }
-.conv-item:hover { background: var(--bg-hover); }
-.conv-item.active { background: var(--bg-active); border-left-color: var(--accent); border-left-width: 4px; }
-.conv-item.processing { border-left-color: var(--accent); animation: processPulse 2s ease-in-out infinite; }
+.conv-item:hover {
+  background: var(--bg-card);
+  border-color: var(--border);
+  transform: translateX(4px) translateY(-1px);
+  padding-left: 20px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+}
+.conv-item.active {
+  background: var(--bg-active);
+  border-left-color: var(--accent);
+  border-left-width: 4px;
+  border-color: var(--border-accent-soft);
+  transform: translateX(2px);
+  box-shadow: 0 2px 12px rgba(99,102,241,0.1);
+}
+.conv-item.processing {
+  border-left-color: var(--accent);
+  border-color: var(--border-accent);
+  animation: processPulse 2s ease-in-out infinite;
+}
 @keyframes processPulse {
-  0%, 100% { border-left-color: var(--accent); }
-  50% { border-left-color: rgba(129,140,248,0.3); }
+  0%, 100% { border-color: var(--border-accent); box-shadow: 0 2px 12px rgba(99,102,241,0.1); }
+  50% { border-color: rgba(129,140,248,0.3); box-shadow: 0 4px 20px rgba(99,102,241,0.15); }
 }
 
 .conv-info { flex: 1; min-width: 0; }
@@ -441,11 +480,24 @@ function handleDelete(sessionId: string, e: Event) {
   background: rgba(220,38,38,0.9); border: none;
   color: #fff; font-size: 13px; cursor: pointer;
   z-index: 3;
-  transition: width 0.2s cubic-bezier(0.16,1,0.3,1);
+  transition: width 0.3s cubic-bezier(0.34,1.56,0.64,1), background 0.2s ease;
 }
-.conv-item:hover .conv-hover-delete { width: 48px; }
-.conv-hover-delete:hover { background: rgba(185,28,28,1); }
+.conv-item:hover .conv-hover-delete {
+  width: 52px;
+  animation: deleteSlideIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+.conv-hover-delete:hover {
+  background: rgba(185,28,28,1);
+  box-shadow: -4px 0 12px rgba(220,38,38,0.4);
+}
+.conv-hover-delete:active {
+  transform: scale(0.95);
+}
 .conv-hover-delete svg { width: 16px; height: 16px; flex-shrink: 0; }
+@keyframes deleteSlideIn {
+  from { width: 0; opacity: 0; }
+  to { width: 52px; opacity: 1; }
+}
 /* Mobile: always visible */
 @media (max-width: 768px) {
   .conv-hover-delete { opacity: 0.7; }

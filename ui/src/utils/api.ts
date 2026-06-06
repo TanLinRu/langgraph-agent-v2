@@ -21,6 +21,7 @@ export {
   fetchCliList,
   listSessions,
   createSession,
+  clearSessionMessages,
   deleteSessionById,
   updateSessionProjectPath,
   renameSessionById,
@@ -29,4 +30,8 @@ export {
   listDrives,
   compactSession,
   reviewPlan,
+  fetchWorkflows,
+  getSessionWorkflowStatus,
+  fetchWorkflow,
+  approveWorkflow,
 } from './api/endpoints'

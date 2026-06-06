@@ -154,3 +154,29 @@ def save_turn(
     )
     conn.commit()
     conn.close()
+
+
+def clear_session_messages(session_id: str) -> None:
+    """Clear all messages in a session (keep the session itself).
+
+    Args:
+        session_id: Session identifier
+    """
+    conn = _get_conn()
+    conn.execute(
+        "DELETE FROM messages WHERE session_id = ?",
+        (session_id,),
+    )
+    # Also clear task_updates related to this session
+    conn.execute(
+        "DELETE FROM task_updates WHERE session_id = ?",
+        (session_id,),
+    )
+    # Reset session title and summary
+    conn.execute(
+        "UPDATE sessions SET title = NULL, summary = NULL, updated_at = CURRENT_TIMESTAMP "
+        "WHERE session_id = ?",
+        (session_id,),
+    )
+    conn.commit()
+    conn.close()

@@ -129,9 +129,12 @@ function elapsedStr(): string {
   background: rgba(129,140,248,0.08);
   border: 1px solid rgba(129,140,248,0.15);
   border-bottom: none;
-  transition: background 0.15s;
+  transition: background 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
 }
-.thinking-panel-header:hover { background: rgba(129,140,248,0.13); }
+.thinking-panel-header:hover {
+  background: rgba(129,140,248,0.13);
+  transform: translateX(4px);
+}
 .thinking-panel-header-label {
   font-size: 13px; font-weight: 560; color: var(--accent); letter-spacing: 0.3px;
 }
@@ -164,13 +167,21 @@ function elapsedStr(): string {
   border-radius: 0 0 12px 12px;
   background: var(--bg-overlay);
   padding: 0; max-height: 60vh; overflow-y: auto;
+  animation: panelExpand 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes panelExpand {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .thinking-panel-agent-group {
   padding: 10px 16px;
   border-bottom: 1px solid rgba(129,140,248,0.06);
-  animation: chunkIn 0.3s ease both;
+  animation: chunkIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+  transition: background 0.2s ease;
 }
-.thinking-panel-agent-group:last-child { border-bottom: none; }
+.thinking-panel-agent-group:hover {
+  background: rgba(129,140,248,0.04);
+}
 .thinking-panel-agent-header {
   display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
 }

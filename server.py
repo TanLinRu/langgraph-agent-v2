@@ -19,6 +19,7 @@ from src.agent.config_manager import get_config_manager
 from src.agent.context.compression import ContextCompressor
 from src.agent.context.memory import MemoryManager
 from src.agent.db import (
+    clear_session_messages,
     compact_session as db_compact_session,
 )
 from src.agent.db import (
@@ -49,6 +50,12 @@ from src.agent.db import (
 )
 from src.agent.file_service import build_file_tree, read_file_content
 from src.agent.orchestrator import Orchestrator
+from src.agent.workflow import (
+    CommandDispatcher,
+    GraphConfigManager,
+    CheckpointManager,
+)
+from src.agent.workflow.graph_config_manager import get_graph_config_manager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -156,6 +163,20 @@ class AgentConfigUpdate(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     enable_thinking: bool | None = None
+
+
+class WorkflowApproveRequest(BaseModel):
+    session_id: str
+    approved: bool = True
+
+
+class WorkflowUpsertRequest(BaseModel):
+    id: str
+    name: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    nodes: list[dict] | None = None
+    edges: list[dict] | None = None
 
 
 # ── Platform helpers ────────────────────────────────────────────
@@ -381,14 +402,68 @@ async def _orchestrate_stream(
 @app.post("/chat")
 async def chat(request: ChatRequest):
     session_id = request.session_id or create_session()
+    update_session_status(session_id, "processing")
+    _start_time = time.time()
+
+    # Check if message starts with / (command)
+    if request.message.startswith("/"):
+        # Use CommandDispatcher for / commands
+        dispatcher = CommandDispatcher(config)
+
+        async def stream():
+            _message_accum = ""
+            _thinking_accum = ""
+            _sse_idx = 0
+            _finally_done = False
+
+            try:
+                async for event in _passthrough(dispatcher.dispatch(session_id, request.message)):
+                    event["session_id"] = session_id
+                    _sse_idx += 1
+                    etype = event.get("type", "")
+                    if etype == "message":
+                        _message_accum += event.get("data", "") or ""
+                    elif etype == "thinking":
+                        _thinking_accum += event.get("data", "") or ""
+                    elif etype == "done":
+                        _finally_done = True
+                        # Save final message
+                        if _message_accum and _message_accum.strip():
+                            save_message(session_id, "human", request.message)
+                            save_message(session_id, "ai", _message_accum, thinking=_thinking_accum or "")
+                    payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    yield payload
+                    await asyncio.sleep(0)
+
+                if not _finally_done:
+                    yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                logger.error("[CHAT] command dispatch error: %s", e, exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
+            finally:
+                reconcile_session_tasks(session_id)
+                duration_ms = int((time.time() - _start_time) * 1000)
+                update_session_status(session_id, "completed")
+                update_session_duration(session_id, duration_ms)
+                logger.info("[CHAT] session=%s command completed: %d events, %dms", session_id, _sse_idx, duration_ms)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # Normal chat flow (non-command)
     memory_context = get_memory().inject_context(request.message)
     history = load_history(session_id)
     # Load session summary from previous compaction
     session_summary = get_session_summary(session_id)
     if session_summary:
         logger.info("[CHAT] session=%s has summary: %d chars", session_id, len(session_summary))
-    update_session_status(session_id, "processing")
-    _start_time = time.time()
 
     async def stream():
         assistant_content = ""
@@ -664,6 +739,12 @@ async def update_session_project_path_endpoint(session_id: str, request: dict):
 async def delete_session_endpoint(session_id: str):
     delete_task_updates_for_sessions([session_id])
     delete_session(session_id)
+    return {"status": "ok"}
+
+
+@app.delete("/api/sessions/{session_id}/messages")
+async def clear_session_messages_endpoint(session_id: str):
+    clear_session_messages(session_id)
     return {"status": "ok"}
 
 
@@ -1224,6 +1305,89 @@ async def memory_list(namespace: str = "default"):
 async def memory_delete(namespace: str, key: str):
     get_memory().delete(key, namespace)
     return {"status": "ok"}
+
+
+# ── Workflows ───────────────────────────────────────────────────
+
+
+@app.get("/api/workflows")
+async def list_workflows():
+    """Get all workflow configurations."""
+    gcm = get_graph_config_manager()
+    workflows = gcm.list_graphs()
+    result = []
+    for wf in workflows:
+        result.append({
+            "id": wf.get("id"),
+            "name": wf.get("name", wf.get("id")),
+            "description": wf.get("description", ""),
+            "enabled": wf.get("enabled", True),
+            "nodes_count": len(wf.get("nodes", [])),
+        })
+    return {"workflows": result}
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_workflow(workflow_id: str):
+    """Get a single workflow configuration."""
+    gcm = get_graph_config_manager()
+    workflow = gcm.get_graph(workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+    return {"id": workflow_id, **workflow}
+
+
+@app.post("/api/workflows/{workflow_id}")
+async def upsert_workflow(workflow_id: str, request: WorkflowUpsertRequest):
+    """Create or update a workflow configuration."""
+    gcm = get_graph_config_manager()
+    # Get existing config and merge with updates
+    existing = gcm.get_graph(workflow_id) or {}
+    data = {**existing, **request.model_dump(exclude_none=True)}
+    # Validate
+    errors = gcm.validate_graph(data)
+    if errors:
+        raise HTTPException(status_code=400, detail=f"Validation errors: {errors}")
+    gcm.save_graph(workflow_id, data)
+    return {"status": "ok", "workflow_id": workflow_id}
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str):
+    """Delete a workflow configuration."""
+    gcm = get_graph_config_manager()
+    if not gcm.delete_graph(workflow_id):
+        raise HTTPException(status_code=404, detail=f"Workflow not found: {workflow_id}")
+    return {"status": "ok"}
+
+
+@app.post("/api/workflow/approve")
+async def approve_workflow(request: WorkflowApproveRequest):
+    """Approve or reject a pending workflow approval."""
+    await CheckpointManager.approve(request.session_id, request.approved)
+    return {"status": "ok", "approved": request.approved}
+
+
+@app.get("/api/workflow/pending")
+async def list_pending_approvals():
+    """List all workflows waiting for approval."""
+    pending = await CheckpointManager.list_pending_approvals()
+    return {"pending": pending}
+
+
+@app.get("/api/workflow/status/{session_id}")
+async def get_workflow_status(session_id: str):
+    """Get current workflow status for a session."""
+    checkpoint = await CheckpointManager.get_latest(session_id)
+    if not checkpoint:
+        return {"status": "none", "detail": "No active workflow"}
+    return {
+        "status": "active",
+        "graph_id": checkpoint.get("graph_id"),
+        "current_node": checkpoint.get("current_node"),
+        "is_interrupted": checkpoint.get("is_interrupted", False),
+        "pending_approval": checkpoint.get("pending_approval"),
+    }
 
 
 # ── Health ──────────────────────────────────────────────────────

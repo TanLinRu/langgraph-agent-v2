@@ -101,7 +101,7 @@ export const useChatStore = defineStore('chat', () => {
       if (data.audit_summary) {
         msg.setAuditSummary(data.audit_summary)
       }
-      if (data.project_path) {
+      if (data.project_path && sessionId.value) {
         const existing = sessionsStore.getSessionById(sessionId.value)
         if (existing && !existing.project_path) {
           existing.project_path = data.project_path

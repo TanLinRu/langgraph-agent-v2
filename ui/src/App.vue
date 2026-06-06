@@ -203,12 +203,14 @@ body {
   position: absolute; border-radius: 50%; filter: blur(80px);
   opacity: var(--orb-opacity);
   animation: orbFloat 24s ease-in-out infinite;
+  will-change: transform;
 }
 .orb-1 {
   width: 420px; height: 420px;
   background: radial-gradient(circle, #6366f1, #8b5cf6);
   top: -12%; left: -8%;
   animation-duration: 22s;
+  animation-delay: 0s;
 }
 .orb-2 {
   width: 360px; height: 360px;
@@ -225,11 +227,37 @@ body {
   animation-delay: -12s;
   opacity: 0.2;
 }
+.orb-4 {
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, #c084fc, #a78bfa);
+  top: 20%; right: 20%;
+  animation-duration: 18s;
+  animation-delay: -8s;
+  opacity: 0.15;
+  filter: blur(60px);
+}
 @keyframes orbFloat {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  25% { transform: translate(35px, -45px) scale(1.06); }
-  50% { transform: translate(-25px, 25px) scale(0.94); }
-  75% { transform: translate(20px, 30px) scale(1.02); }
+  0%, 100% { transform: translate(0, 0) scale(1) rotate(0deg); }
+  20% { transform: translate(40px, -50px) scale(1.08) rotate(5deg); }
+  40% { transform: translate(-30px, 30px) scale(0.94) rotate(-3deg); }
+  60% { transform: translate(25px, 40px) scale(1.04) rotate(2deg); }
+  80% { transform: translate(-20px, -25px) scale(1.02) rotate(-4deg); }
+}
+
+/* Subtle grid overlay */
+.bg-orbs::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: gridFade 8s ease-in-out infinite;
+}
+@keyframes gridFade {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.8; }
 }
 
 /* ── App layout: 3-column ── */

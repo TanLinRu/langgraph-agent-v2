@@ -5,7 +5,7 @@
  * 不涉及 SSE 流式通信 (归属 sse.ts)。
  */
 
-import type { AgentInfo, ACPAgentInfo, CliInfo, MetricsData, BrowseNode, SessionInfo, TaskUpdate } from './types'
+import type { AgentInfo, ACPAgentInfo, CliInfo, MetricsData, BrowseNode, SessionInfo, TaskUpdate, WorkflowInfo } from './types'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
@@ -84,6 +84,12 @@ export async function createSession(title?: string, projectPath?: string): Promi
 export async function deleteSessionById(sessionId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`Delete session failed: ${res.status}`)
+}
+
+/** 清除会话消息 /api/sessions/:id/messages (DELETE) */
+export async function clearSessionMessages(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/messages`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`Clear messages failed: ${res.status}`)
 }
 
 /** 更新会话项目路径 /api/sessions/:id/project-path (PATCH) */
@@ -177,5 +183,44 @@ export async function compactSession(sessionId: string): Promise<{
     body: JSON.stringify({ session_id: sessionId }),
   })
   if (!res.ok) throw new Error(`Compact failed: ${res.status}`)
+  return res.json()
+}
+
+/** 获取工作流列表 /api/workflows */
+export async function fetchWorkflows(): Promise<WorkflowInfo[]> {
+  const res = await fetch(`${API_BASE}/api/workflows`)
+  const data = await res.json()
+  return data.workflows
+}
+
+/** 获取单个工作流 /api/workflows/:id */
+export async function fetchWorkflow(workflowId: string): Promise<WorkflowInfo & { nodes: unknown[]; edges: unknown[] }> {
+  const res = await fetch(`${API_BASE}/api/workflows/${workflowId}`)
+  if (!res.ok) throw new Error(`Workflow not found: ${workflowId}`)
+  return res.json()
+}
+
+/** 查询 session 的工作流状态 /api/workflow/status/:session_id (GET) */
+export async function getSessionWorkflowStatus(sessionId: string): Promise<{
+  status: string
+  detail?: string
+  graph_id?: string
+  current_node?: string
+  is_interrupted?: boolean
+  pending_approval?: unknown
+}> {
+  const res = await fetch(`${API_BASE}/api/workflow/status/${sessionId}`)
+  if (!res.ok) throw new Error(`Workflow status failed: ${res.status}`)
+  return res.json()
+}
+
+/** 审批工作流 /api/workflow/approve (POST) */
+export async function approveWorkflow(sessionId: string, approved: boolean = true): Promise<{ status: string; approved: boolean }> {
+  const res = await fetch(`${API_BASE}/api/workflow/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, approved }),
+  })
+  if (!res.ok) throw new Error(`Approve workflow failed: ${res.status}`)
   return res.json()
 }

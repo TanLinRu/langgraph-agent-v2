@@ -104,6 +104,7 @@ class ACPNativeClient:
                         logger.warning("[ACPNative] failed to parse: %s", line[:200])
                         continue
 
+                    logger.info("[ACPNative msg] <- %s", msg)
                     msg_id = msg.get("id")
                     if msg_id is not None and msg_id in self._pending:
                         logger.debug("[ACPNative] <- response id=%s", msg_id)

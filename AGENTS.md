@@ -9,7 +9,7 @@
 | `python -m src.agent.main` | CLI single-shot (`--input`) or interactive (`--interactive`) |
 | `cd ui && npm run dev` | Vite dev server (port 3000, proxies `/api` to :8000) |
 | `cd ui && npx vue-tsc -b && npx vite build` | production build |
-| `pytest --cov=src -v` | all tests (auto-isolated, no real API keys needed) |
+| `pytest --cov=src -v` | all tests (94 tests, auto-isolated, no real API keys) |
 | `pytest -k "test_name"` | single test |
 | `ruff check .` | lint gate. `ruff check . --fix` for auto-fixables |
 | `mypy src` | advisory only (pre-existing errors) |
@@ -18,29 +18,40 @@
 
 ### Backend: 3 execution paths
 - **Agent** (`src/agent/agent/core.py`) — single ReAct loop, used by `/chat` endpoint
-- **Orchestrator** (`src/agent/orchestrator/core.py`) — LangGraph StateGraph with 3 nodes (supervisor → execute → review), used by `/api/orchestrate`
+- **Orchestrator** (`src/agent/orchestrator/core.py`) — LangGraph StateGraph with 6 nodes (perceive→plan→wait→dispatch→synthesize→reflect), used by `/api/orchestrate`
 - **ACP** (`src/agent/acp_agent.py`) — external CLI agent via JSON-RPC 2.0 over stdio
 
+### Orchestrator StateGraph
+- `perceive`: builds `history_summary` from prior messages + prior-cycle agent results
+- `plan`: LLM generates structured JSON `Plan` (steps with agent/task/depends_on). Conditional edge: if `auto_approve=false` and >1 step → `wait`, else → `dispatch`
+- `wait`: calls `interrupt()` to suspend graph; user reviews plan via `/api/orchestrate/{session_id}/review`
+- `dispatch`: executes sub-agents in DAG order; `depends_on` values are step **indices** (`"0"`, `"1"`), resolved via `step_index_map` to inject upstream outputs as context
+- `synthesize`: review/audit node. Conditional edge: `approve→reflect`, `revise→plan` (re-dispatch loop), `reject→__end__`
+- `reflect`: anti-pattern detection, saved to `memory/experiences.md`
+- Graph paused via `interrupt()` after `wait`; resumed via `Command(resume=...)` on same `thread_id`
+
 ### Key packages
-- `orchestrator/` — core.py (StateGraph), planner.py, tools.py (SubAgentTool, ACPSubAgentTool), _events.py. Dead: dispatcher.py, summarizer.py (replaced by StateGraph).
+- `orchestrator/` — core.py (StateGraph), planner.py (Plan/Step/GraphState models), tools.py (SubAgentTool, ACPSubAgentTool), _events.py (re-exports)
 - `db/` — connection.py (auto-migration), sessions.py, messages.py, tasks.py, tools.py (save_metrics/load_metrics), compact.py
-- `agent/` — core.py (Agent class), streaming.py
+- `agent/` — core.py (Agent class), streaming.py (file ref extraction)
 - `acp/` — client.py (ACPNativeClient: JSON-RPC over stdio subprocess)
 - `config_manager.py` — singleton with 5s hot-reload polling on `config/*.json`
 - `error_handler.py` — circuit breaker + structured error envelope for agent/tool errors
-- `events.py` — EventType enum + make_event factory (11 event types)
+- `events.py` — EventType enum + make_event factory (14 event types)
 
 ### Config
 - `.env` → `AgentConfig` (`src/agent/config.py`). All fields nullable; `resolve_model()` throws if both API key and env var missing.
-- `config/agents.json` — 7 agents; each can override model, temperature, max_tokens. ACP agents have `acp_mode: true` + `acp_cli_id`.
+- `config/agents.json` — 7 agents; ACP agents have `acp_mode: true` + `acp_cli_id`
 - `config/acp_agents.json` — external CLI agent definitions (command, timeout, cwd)
 - `config/tools.json` — 5 tools (execute_code, read_file, write_file, list_directory, search_files)
 - `config/skills.json` — skill metadata with per-agent assignment
 - `ui/.env.development` sets `VITE_API_BASE=http://localhost:8000`
+- `config/agents.json` system_prompt for verifier scoped to "only verify claims present in upstream results"
 
 ### SSE streaming
-- Event types: `thinking_start`, `thinking`, `thinking_done`, `tool_call`, `message`, `plan`, `task_update`, `metrics`, `audit_summary`, `summary`, `error`, `done`
-- All events forwarded with `session_id` injected by `server.py:_passthrough()` which batches micro-events from ACP agents (200 char thinking, 150 char message thresholds)
+- 14 event types: `thinking_start`, `thinking`, `thinking_done`, `tool_call`, `message`, `plan`, `task_update`, `metrics`, `audit_summary`, `summary`, `interrupt`, `permission_request`, `error`, `done`
+- `audit_summary` events carry an optional top-level `agent_outputs: {agent_name: full_raw_output}` field
+- All events forwarded with `session_id` by `server.py:_passthrough()` which batches micro-events from ACP agents (200 char thinking, 150 char message thresholds)
 - Frontend: backpressure queue with MICRO/STEP/MACRO tiers; 120ms STEP_DELAY defers tool_call/message/plan/summary for visual stepping
 
 ### Storage
@@ -57,6 +68,12 @@
 - Feed `orchestrator.run()` with `load_history_with_meta(session_id)` (returns `list[dict]`). Using `load_history()` (returns `list[BaseMessage]`) causes `'AIMessage' object has no attribute 'get'`.
 - Feed `ContextCompressor.compress()` with `load_history()` → `list[BaseMessage]`.
 
+### `create_react_agent` keyword
+Use `prompt=` not `system_prompt=` for langgraph 1.1.10+ (`src/agent/tools.py`).
+
+### `allowed_msgpack_modules` registration
+`Plan` model must be registered to suppress deserialization warning: `allowed_msgpack_modules: set[Any] = set(); allowed_msgpack_modules.add(Plan)` at module init (`src/agent/orchestrator/core.py`).
+
 ### Vue reactivity: never alias a message ref
 ```ts
 // CORRECT:
@@ -67,7 +84,7 @@ const m = messages.value[idx]; m.content += chunk
 Applies to all 3 send paths in `streamManager.ts`.
 
 ### SSE stream must reconcile task state on end
-All 3 `finally` blocks call `msg.reconcileStreamEnd()` + `_processPendingMessages()`. Missing this leaves sidebar with "处理中" forever.
+All 3 `finally` blocks call `msg.reconcileStreamEnd()` + `_processPendingMessages()`. **Skip** reconcile when `pendingReview` is set (HITL interrupt) — otherwise pending tasks are marked `failed` prematurely.
 
 ### `sessionId` sync between stores
 - `chat.ts` creates a `sessionId` ref passed to `useStreamManager`; both share the same ref.
@@ -84,7 +101,21 @@ Orchestrator estimates tokens per agent as `len(text) * 1.5` (no real usage_meta
 - On Windows, `.ps1` scripts detected via `Get-Command` in `server.py:_command_available()`.
 - `@opencode` mention routes directly to `sendACP()` in frontend store, bypassing supervisor.
 
+### Agent output truncation retry
+`SubAgentTool._arun` checks `_is_truncated()` (heuristic: ends mid-sentence, missing closing code fence, or abrupt cutoff patterns). Retries once with "Continue from where you left off". Does NOT block downstream agents if retry also truncated.
+
+### DAG dependency resolution
+`depends_on` in plan steps are step **indices** (`"0"`, `"1"`), not agent names. `_dispatch_node` builds `step_index_map` keyed by index string to resolve upstream outputs for context injection. The DAG loop tracks `executed_indices` (set of indices), not agent names.
+
+### HITL interrupt flow
+- Plan with `auto_approve=false` and >1 step → graph enters `wait` node → `interrupt()` pauses execution
+- Server emits `interrupt` event with `{thread_id, plan}`; frontend shows review dialog
+- User approves/rejects via `POST /api/orchestrate/{session_id}/review` → calls `orchestrator.resume(thread_id, decision)`
+- `submitReview` in frontend handles resumed stream (plan + dispatch + synthesize + reflect)
+- `_passthrough` must map step index → agent ID when constructing `interrupt` event data
+
 ### Test quirks
 - `tests/conftest.py` auto-isolates env vars (mock keys, temp DB paths) — no real API keys needed.
 - Orchestrator tests mock `resolve_model` via `unittest.mock.patch("src.agent.models.resolve_model")`. The `from src.agent import models as _models` pattern makes this work.
 - No CI pipeline — all verification is local.
+- Main test file: `tests/test_orchestrator_v2.py` (v2 6-node graph). `tests/test_supervisor.py` tests the old 3-node graph.

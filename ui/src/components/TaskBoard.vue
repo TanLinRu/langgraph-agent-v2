@@ -53,6 +53,11 @@ const STATUS_LABELS: Record<string, string> = {
   border-radius: 14px; padding: 16px 16px;
   animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
   box-shadow: 0 2px 12px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.task-board:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.04);
 }
 @keyframes msgIn {
   from { opacity: 0; transform: translateY(6px); }
@@ -68,11 +73,31 @@ const STATUS_LABELS: Record<string, string> = {
 .task-item {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 12px; border-radius: 10px;
-  margin-bottom: 6px; transition: all 0.3s;
+  margin-bottom: 6px; transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
   border: 1px solid transparent;
+  animation: taskItemIn 0.35s cubic-bezier(0.34,1.56,0.64,1) both;
 }
-.task-item.running { background: rgba(129,140,248,0.06); border-color: rgba(129,140,248,0.15); }
-.task-item.completed { background: rgba(52,211,153,0.04); border-color: rgba(52,211,153,0.1); }
+.task-item:hover {
+  transform: translateX(6px) scale(1.01);
+  background: rgba(129,140,248,0.04);
+}
+.task-item.running {
+  background: rgba(129,140,248,0.06);
+  border-color: rgba(129,140,248,0.15);
+  animation: taskItemIn 0.35s cubic-bezier(0.34,1.56,0.64,1) both, taskRunning 2s ease-in-out infinite;
+}
+.task-item.completed {
+  background: rgba(52,211,153,0.04);
+  border-color: rgba(52,211,153,0.1);
+}
+@keyframes taskItemIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes taskRunning {
+  0%, 100% { border-color: rgba(129,140,248,0.15); }
+  50% { border-color: rgba(129,140,248,0.35); }
+}
 
 .task-item-icon { width: 24px; height: 24px; flex-shrink: 0; }
 .task-item-info { flex: 1; min-width: 0; }
@@ -87,14 +112,19 @@ const STATUS_LABELS: Record<string, string> = {
 }
 .task-item-fill.running {
   width: 0%;
-  background: linear-gradient(90deg, #818cf8, #6366f1);
-  animation: taskProgress 1.8s ease-in-out forwards;
+  background: linear-gradient(90deg, #818cf8, #6366f1, #818cf8);
+  background-size: 200% 100%;
+  animation: taskProgress 1.8s ease-in-out forwards, shimmer 2s ease-in-out infinite;
 }
 .task-item-fill.completed { width: 100%; background: var(--color-green); }
 @keyframes taskProgress {
   0% { width: 5%; opacity: 0.6; }
   50% { width: 65%; opacity: 1; }
   100% { width: 45%; opacity: 0.8; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 .task-item-status {

@@ -179,6 +179,10 @@ function statusLabel(s?: string): string {
   display: flex; gap: 12px; align-items: flex-start;
   align-self: flex-start; width: 85%;
   animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.msg-agent-wrap:hover {
+  transform: translateX(4px);
 }
 @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -193,12 +197,38 @@ function statusLabel(s?: string): string {
 /* Bubble */
 .msg-agent-bubble {
   flex: 1; min-width: 0;
-  padding: 13px 20px; border-radius: 14px;
+  padding: 13px 20px; border-radius: 16px;
   border: 1px solid var(--border);
-  background: var(--bg-glass);
-  border-bottom-left-radius: 5px;
+  background: var(--bg-card);
+  border-bottom-left-radius: 6px;
   border-left: 3px solid var(--agent-color, var(--accent));
   display: flex; flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  position: relative;
+}
+.msg-agent-bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(129,140,248,0.05), rgba(167,139,250,0.08));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.msg-agent-bubble:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12),
+              0 0 40px rgba(129,140,248,0.08),
+              inset 0 1px 0 rgba(255,255,255,0.05);
+  border-color: var(--border-accent);
 }
 .msg-agent-bubble.done-anim { animation: bubbleDone 0.4s cubic-bezier(0.34,1.56,0.64,1) both; }
 @keyframes bubbleDone { 0% { transform: scale(1); } 50% { transform: scale(1.015); } 100% { transform: scale(1); } }
@@ -224,9 +254,28 @@ function statusLabel(s?: string): string {
 
 /* File refs */
 .file-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
-.file-ref { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; margin: 1px 2px; background: var(--accent-bg); border: 1px solid var(--border-accent); border-radius: 7px; color: var(--accent-text); font-size: 13px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; cursor: pointer; transition: all 0.15s; }
-.file-ref:hover { background: var(--accent-bg-hover); border-color: var(--accent-focus); }
-.file-ref-icon { font-size: 12px; }
+.file-ref {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; margin: 1px 2px;
+  background: var(--accent-bg); border: 1px solid var(--border-accent); border-radius: 7px;
+  color: var(--accent-text); font-size: 13px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
+  animation: fileRefIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+.file-ref:hover {
+  background: var(--accent-bg-hover); border-color: var(--accent-focus);
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 4px 12px rgba(129,140,248,0.25);
+}
+.file-ref:active {
+  transform: translateY(0) scale(0.98);
+}
+.file-ref-icon { font-size: 12px; transition: transform 0.2s; }
+.file-ref:hover .file-ref-icon { transform: rotate(-5deg) scale(1.1); }
+@keyframes fileRefIn {
+  from { opacity: 0; transform: scale(0.8) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
 
 .tool-calls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; width: 100%; align-items: flex-start; }
 

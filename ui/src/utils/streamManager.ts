@@ -168,6 +168,11 @@ export function useStreamManager(
           sessionId.value = event.session_id
           useSessionsStore().activeSessionId = event.session_id
         }
+        // Handle /clear command - clear messages when receiving "Messages cleared" message
+        if (event.type === 'message' && (event.data as string).includes('Messages cleared')) {
+          msg.clear()
+          msg.resetTaskItems()
+        }
         const agentName = event.agent_name
         if (event.type === 'thinking_start') {
           _thinkChunkCount = 0
@@ -567,21 +572,81 @@ export function useStreamManager(
               useSessionsStore().activeSessionId = event.session_id as string
             }
             if (event.type === 'thinking_start') {
-              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true; msg.setThinkingStart(msgIdx) }
+              if (msgIdx < 0) { 
+                msgIdx = msg.addAssistant(agentId); 
+                streamingActive.value = true; 
+                msg.setThinkingStart(msgIdx);
+                _thinkChunkCount = 0
+              }
             } else if (event.type === 'thinking') {
-              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true; msg.setThinkingStart(msgIdx) }
-              msg.appendThinking(msgIdx, event.data as string)
+              _thinkChunkCount++
+              if (msgIdx < 0) { 
+                msgIdx = msg.addAssistant(agentId); 
+                streamingActive.value = true; 
+                msg.setThinkingStart(msgIdx);
+              }
+              if (msg.thinkTypeState.value[msgIdx]) {
+                msg.thinkTypeState.value[msgIdx].full += (event.data as string)
+                _startTypewriter()
+              } else {
+                msg.appendThinking(msgIdx, event.data as string)
+              }
+            } else if (event.type === 'agent_thought_chunk') {
+              _thinkChunkCount++
+              if (msgIdx < 0) { 
+                msgIdx = msg.addAssistant(agentId); 
+                streamingActive.value = true; 
+                msg.setThinkingStart(msgIdx);
+              }
+              if (msg.thinkTypeState.value[msgIdx]) {
+                const text = event.data?.text || ''
+                msg.thinkTypeState.value[msgIdx].full += text
+                _startTypewriter()
+              } else {
+                const text = event.data?.text || ''
+                msg.appendThinking(msgIdx, text)
+              }
             } else if (event.type === 'tool_call') {
               if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
               const tc = Array.isArray(event.data) ? event.data : [event.data]
               const valid = tc.filter((t: any) => t?.name)
-              if (valid.length > 0) msg.messages.value[msgIdx]!.toolCalls = valid
+              if (valid.length > 0) {
+                msg.messages.value[msgIdx]!.toolCalls = valid.map((t: any) => ({
+                  name: t.name,
+                  args: t.args || {},
+                  status: t.status || 'pending' as const
+                }))
+              }
+            } else if (event.type === 'tool_call_update') {
+              if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
+              const tc = event.data as { toolCallId: string; status: string; title?: string; content?: any[] }
+              if (tc && msg.messages.value[msgIdx]?.toolCalls) {
+                const toolCallIdx = msg.messages.value[msgIdx]!.toolCalls!.findIndex(
+                  (t: any) => t.toolCallId === tc.toolCallId || t.name === tc.title
+                )
+                if (toolCallIdx >= 0) {
+                  msg.messages.value[msgIdx]!.toolCalls![toolCallIdx].status = tc.status as any
+                }
+              }
             } else if (event.type === 'message') {
               if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
-              msg.appendContent(msgIdx, event.data as string)
+              const fullContent = event.data as string
+              if (fullContent) {
+                msg.initTypewriter(msgIdx, fullContent)
+                _startTypewriter()
+              }
+              if (event.file_refs) msg.messages.value[msgIdx]!.fileRefs = event.file_refs as string[]
               msg.setThinkingDone(msgIdx)
             } else if (event.type === 'thinking_done') {
-              if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
+              if (msgIdx >= 0 && msg.thinkTypeState.value[msgIdx]) {
+                const ts = msg.thinkTypeState.value[msgIdx]
+                if (ts.done) {
+                  if (!msg.messages.value[msgIdx]?.thinking && ts.full) {
+                    msg.messages.value[msgIdx]!.thinking = ts.full
+                  }
+                  msg.setThinkingDone(msgIdx)
+                } else ts.pendingDone = true
+              } else if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
             } else if (event.type === 'metrics') {
               msg.setMetrics(event.data as MetricsData)
             } else if (event.type === 'done') {
@@ -592,6 +657,8 @@ export function useStreamManager(
               if (data) permissionRequest.value = data
             } else if (event.type === 'error') {
               msg.addSystem(`⚠ ${event.data}`)
+            } else if (event.type === 'available_commands_update') {
+              _appendLog('tool_call', `Available commands updated: ${event.data?.availableCommands?.length || 0}`, agentId)
             }
           } catch { /* skip */ }
         }
@@ -667,9 +734,93 @@ export function useStreamManager(
     if (content.startsWith('/')) {
       const cmd = content.trim().toLowerCase()
       if (cmd === '/compact') { msg.addSystem(await handleCompact()); return }
-      if (cmd === '/clear') { msg.clear(); sessionId.value = null; return }
-      if (cmd === '/new') { msg.clear(); sessionId.value = null; return }
-      msg.addSystem(`Unknown command: ${cmd}. Available: /compact, /clear, /new`)
+      if (cmd === '/clear') {
+        const sid = sessionId.value
+        if (sid) {
+          try {
+            const { clearSessionMessages } = await import('../utils/api')
+            await clearSessionMessages(sid)
+          } catch (e: any) {
+            console.warn('/clear server sync failed:', e.message)
+          }
+        }
+        msg.clear()
+        msg.resetTaskItems()
+        sessionId.value = null
+        return
+      }
+      if (cmd === '/new') {
+        msg.clear()
+        msg.resetTaskItems()
+        sessionId.value = null
+        try {
+          const { createSession } = await import('../utils/api')
+          const newSession = await createSession()
+          sessionId.value = newSession.session_id
+          const sessionsStore = useSessionsStore()
+          sessionsStore.activeSessionId = newSession.session_id
+        } catch (e: any) {
+          console.warn('/new server sync failed:', e.message)
+        }
+        return
+      }
+      if (cmd === '/workflow' || cmd === '/wf') {
+        const sid = sessionId.value || useSessionsStore().activeSessionId
+        const { fetchWorkflows, getSessionWorkflowStatus } = await import('../utils/api')
+        const wfs = await fetchWorkflows()
+        const lines = [`Available workflows (${wfs.length}):`]
+        for (const wf of wfs) {
+          const desc = wf.description ? ` — ${wf.description}` : ''
+          lines.push(`  - ${wf.id} (${wf.nodes_count ?? '?'} nodes)${desc}`)
+        }
+        if (sid) {
+          try {
+            const ws = await getSessionWorkflowStatus(sid)
+            if (ws.status === 'active') {
+              lines.push('')
+              lines.push(`Current: ${ws.graph_id}`)
+              if (ws.current_node) lines.push(`  Node: ${ws.current_node}`)
+              lines.push(ws.is_interrupted ? '  Status: ⏸ Waiting for approval' : '  Status: ▶ Running')
+            }
+          } catch { /* no active workflow */ }
+        }
+        msg.addSystem(lines.join('\n'))
+        return
+      }
+      if (cmd.startsWith('/workflow ') || cmd.startsWith('/wf ')) {
+        const parts = cmd.split(/\s+/)
+        const sub = parts[1]
+        if (sub === 'status' || sub === 'st') {
+          const sid = sessionId.value || useSessionsStore().activeSessionId
+          if (!sid) { msg.addSystem('No active session'); return }
+          try {
+            const { getSessionWorkflowStatus } = await import('../utils/api')
+            const ws = await getSessionWorkflowStatus(sid)
+            if (ws.status === 'none') { msg.addSystem('No active workflow'); return }
+            const lines = [`Workflow: ${ws.graph_id}`]
+            if (ws.current_node) lines.push(`Current node: ${ws.current_node}`)
+            lines.push(ws.is_interrupted ? 'Status: ⏸ Waiting for approval' : 'Status: ▶ Running')
+            msg.addSystem(lines.join('\n'))
+          } catch (e: any) {
+            msg.addSystem(`Failed to get workflow status: ${e.message}`)
+          }
+          return
+        }
+        if (sub === 'list' || sub === 'ls') {
+          const { fetchWorkflows } = await import('../utils/api')
+          const wfs = await fetchWorkflows()
+          const lines = [`Available workflows (${wfs.length}):`]
+          for (const wf of wfs) {
+            const desc = wf.description ? ` — ${wf.description}` : ''
+            lines.push(`  - ${wf.id} (${wf.nodes_count ?? '?'} nodes)${desc}`)
+          }
+          msg.addSystem(lines.join('\n'))
+          return
+        }
+        msg.addSystem(`Usage: /workflow [list|status|start <id>]  (alias: /wf)`)
+        return
+      }
+      msg.addSystem(`Unknown command: ${cmd}. Available: /compact, /clear, /new, /workflow`)
       return
     }
     const mentionMatch = content.match(/(?:^|\s)@(\w[\w-]*)(?:\s|$)/)

@@ -187,7 +187,7 @@ class Agent:
             threshold,
             len(self.tools),
         )
-        logger.info("[LLM REQUEST] tools=%s", [t.name for t in self.tools])
+        logger.info("[LLM REQUEST] tools=%s", [getattr(t, "name", getattr(t, "__name__", str(t))) for t in self.tools])
         logger.info("-" * 40 + " MESSAGE LIST " + "-" * 40)
         for i, msg in enumerate(messages):
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
@@ -240,7 +240,7 @@ class Agent:
                 "token_count": token_count,
                 "max_tokens": self.config.max_tokens,
                 "compress_threshold": threshold,
-                "tools": [t.name for t in self.tools],
+                "tools": [getattr(t, "name", getattr(t, "__name__", str(t))) for t in self.tools],
                 "extra": extra or {},
             },
         )

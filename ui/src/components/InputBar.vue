@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { fetchAgents, fetchAcpAgents, type AgentInfo, type ACPAgentInfo } from '../utils/api'
+import { fetchAgents, fetchAcpAgents, fetchWorkflows, type AgentInfo, type ACPAgentInfo, type WorkflowInfo } from '../utils/api'
 
 const input = defineModel<string>({ default: '' })
 defineProps<{
@@ -49,14 +49,17 @@ const COMMANDS = [
   { cmd: '/compact', desc: 'Compress session context' },
   { cmd: '/clear', desc: 'Clear all messages' },
   { cmd: '/new', desc: 'Start a new session' },
+  { cmd: '/workflow', desc: 'Execute a workflow' },
+  { cmd: '/wf', desc: 'Execute a workflow (short)' },
 ]
 
 // Agents for @ mention
 const agents = ref<AgentInfo[]>([])
 const acpAgents = ref<ACPAgentInfo[]>([])
+const workflows = ref<WorkflowInfo[]>([])
 const showDropdown = ref(false)
 const dropdownFilter = ref('')
-const filteredItems = ref<Array<{ label: string; desc: string; type: 'command' | 'agent'; badge?: string }>>([])
+const filteredItems = ref<Array<{ label: string; desc: string; type: 'command' | 'agent' | 'workflow'; badge?: string }>>([])
 
 onMounted(async () => {
   try {
@@ -69,11 +72,33 @@ onMounted(async () => {
   } catch (e) {
     console.warn('[InputBar] fetchAcpAgents failed:', e)
   }
+  try {
+    workflows.value = await fetchWorkflows()
+  } catch (e) {
+    console.warn('[InputBar] fetchWorkflows failed:', e)
+  }
 })
 
 function onInput(e: Event) {
   const val = (e.target as HTMLInputElement).value
   const cursorPos = (e.target as HTMLInputElement).selectionStart || val.length
+
+  // Check for /workflow <graph_id> completion
+  if (val.startsWith('/workflow ') || val.startsWith('/wf ')) {
+    const cmdPrefix = val.split(' ')[0]
+    const filter = val.slice(cmdPrefix.length + 1, cursorPos).toLowerCase()
+    dropdownFilter.value = filter
+    filteredItems.value = workflows.value
+      .filter(w => w.id.toLowerCase().includes(filter) || w.name.toLowerCase().includes(filter))
+      .map(w => ({
+        label: `${cmdPrefix} ${w.id}`,
+        desc: w.description || w.name,
+        type: 'workflow' as const,
+        badge: w.enabled ? undefined : 'disabled'
+      }))
+    showDropdown.value = filteredItems.value.length > 0
+    return
+  }
 
   // Check for @ mention
   const atIndex = val.lastIndexOf('@', cursorPos - 1)
@@ -108,8 +133,8 @@ function onInput(e: Event) {
   }
 }
 
-function selectItem(item: { label: string; type: 'command' | 'agent' }) {
-  if (item.type === 'command') {
+function selectItem(item: { label: string; type: 'command' | 'agent' | 'workflow' }) {
+  if (item.type === 'command' || item.type === 'workflow') {
     input.value = item.label + ' '
   } else {
     // Replace the @mention in the input
@@ -206,6 +231,11 @@ function handleSubmit() {
   border-radius: 10px;
   overflow: hidden;
   box-shadow: var(--shadow-lg);
+  animation: dropdownIn 0.25s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .acp-badge {
   font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
@@ -216,14 +246,25 @@ function handleSubmit() {
 .acp-badge.offline { background: var(--bg-hover); color: var(--text-muted); }
 .command-item {
   display: flex; align-items: center; gap: 12px;
-  padding: 10px 16px; cursor: pointer; transition: background 0.15s;
+  padding: 10px 16px; cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
+  animation: cmdItemIn 0.2s ease both;
 }
-.command-item:hover { background: var(--accent-bg); }
+.command-item:hover {
+  background: var(--accent-bg);
+  transform: translateX(4px);
+  padding-left: 20px;
+}
+@keyframes cmdItemIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 .command-cmd {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 13px; color: var(--accent); font-weight: 500;
 }
 .command-cmd.agent { color: var(--color-green); }
+.command-cmd.workflow { color: var(--color-blue); }
 .command-desc { font-size: 12px; color: var(--text-muted); }
 
 .input-bar {
@@ -232,34 +273,110 @@ function handleSubmit() {
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border);
   position: relative; align-items: center;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
 }
 .input-bar.queued input { opacity: 0.7; }
 
 .input-bar input {
-  flex: 1; padding: 13px 18px;
-  background: var(--bg-hover); border: 1px solid var(--border-input); border-radius: 12px;
+  flex: 1; padding: 14px 20px;
+  background: var(--bg-input); border: 1px solid var(--border-input); border-radius: 14px;
   color: var(--text-primary); font-size: 16px; outline: none;
-  transition: border-color 0.2s, background 0.2s;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
 }
-.input-bar input::placeholder { color: var(--text-muted); }
-.input-bar input:focus { border-color: var(--accent-focus); background: var(--bg-glass-hover); }
+.input-bar input::placeholder { 
+  color: var(--text-muted); 
+  transition: color 0.3s ease;
+  font-style: italic;
+}
+.input-bar input:focus {
+  border-color: var(--accent-focus);
+  background: var(--bg-glass-hover);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15), 
+              0 4px 20px rgba(99,102,241,0.1),
+              inset 0 1px 0 rgba(255,255,255,0.05);
+  transform: translateY(-2px);
+}
+.input-bar input:not(:focus):hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border);
+}
 
 .input-bar button {
-  width: 50px; height: 50px;
+  width: 52px; height: 52px;
   display: flex; align-items: center; justify-content: center;
-  background: var(--bg-accent-strong); border: 1px solid var(--border-accent); border-radius: 12px;
-  color: var(--accent-text); cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+  background: var(--bg-accent-strong); 
+  border: 1px solid var(--border-accent); 
+  border-radius: 14px;
+  color: var(--accent-text); cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  position: relative;
+  overflow: hidden;
 }
-.input-bar button:hover:not(:disabled) { background: var(--bg-accent-hover); }
-.input-bar button:active:not(:disabled) { transform: scale(0.95); }
+.input-bar button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(255,255,255,0.3) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.input-bar button:active:not(:disabled)::before {
+  opacity: 1;
+  animation: ripple 0.6s ease-out;
+}
+@keyframes ripple {
+  from { transform: scale(0); }
+  to { transform: scale(2); }
+}
+.input-bar button:hover:not(:disabled) {
+  background: var(--bg-accent-hover);
+  transform: scale(1.08) translateY(-2px);
+  box-shadow: 0 8px 24px rgba(99,102,241,0.4),
+              0 0 30px rgba(129,140,248,0.2);
+  border-color: rgba(99,102,241,0.3);
+}
+.input-bar button:active:not(:disabled) {
+  transform: scale(0.95);
+  box-shadow: 0 2px 8px rgba(99,102,241,0.2);
+}
 .input-bar button:disabled { opacity: 0.3; cursor: not-allowed; }
-.abort-btn {
-  width: 50px; height: 50px;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 12px;
-  color: var(--color-red); cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+.input-bar button svg {
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
 }
-.abort-btn:hover { background: rgba(239,68,68,0.25); }
+.input-bar button:hover:not(:disabled) svg {
+  transform: translateX(2px) translateY(-2px);
+}
+.abort-btn {
+  width: 52px; height: 52px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); border-radius: 14px;
+  color: var(--color-red); cursor: pointer; 
+  transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1); 
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+.abort-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(239,68,68,0.3) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.abort-btn:active::before {
+  opacity: 1;
+  animation: ripple 0.5s ease-out;
+}
+.abort-btn:hover { 
+  background: rgba(239,68,68,0.25); 
+  transform: scale(1.05);
+  box-shadow: 0 4px 16px rgba(239,68,68,0.3);
+}
+.abort-btn:active {
+  transform: scale(0.95);
+}
 
 /* Queue spinner indicator */
 .queue-indicator {

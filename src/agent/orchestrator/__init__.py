@@ -1,4 +1,4 @@
-"""Orchestrator 子包 — StateGraph 3 节点版本。
+"""Orchestrator 子包 — StateGraph 6 节点版本 (perceive→plan→wait→dispatch→synthesize→reflect)。
 
 对外暴露:
 * :class:`Orchestrator` —— 顶层编排器

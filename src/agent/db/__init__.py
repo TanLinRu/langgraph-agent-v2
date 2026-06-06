@@ -25,6 +25,7 @@
 
 from src.agent.db.compact import compact_session
 from src.agent.db.messages import (
+    clear_session_messages,
     load_history,
     load_history_with_meta,
     load_messages,

@@ -160,13 +160,33 @@ export function useMessageManager() {
   }
 
   function setMetrics(data: MetricsData): void {
+    const existingTokens = metrics.value?.tokens || {}
+    const mergedTokens = { ...existingTokens, ...data.tokens }
+    
+    const totalInputTokens = Object.values(mergedTokens).reduce((sum, t) => sum + (t.input || 0), 0)
+    const totalOutputTokens = Object.values(mergedTokens).reduce((sum, t) => sum + (t.output || 0), 0)
+    const totalTokens = totalInputTokens + totalOutputTokens
+    
+    const existingElapsed = metrics.value?.total_elapsed_ms || 0
+    const currentElapsed = data.elapsed_ms || 0
+    const totalElapsed = existingElapsed + currentElapsed
+    
     if (metrics.value) {
       metrics.value = {
         ...data,
-        tokens: { ...metrics.value.tokens, ...data.tokens },
+        tokens: mergedTokens,
+        total_tokens: totalTokens,
+        total_elapsed_ms: totalElapsed,
+        session_start_time: metrics.value.session_start_time || Date.now() - totalElapsed,
       }
     } else {
-      metrics.value = data
+      metrics.value = {
+        ...data,
+        tokens: mergedTokens,
+        total_tokens: totalTokens,
+        total_elapsed_ms: totalElapsed,
+        session_start_time: Date.now() - totalElapsed,
+      }
     }
   }
 

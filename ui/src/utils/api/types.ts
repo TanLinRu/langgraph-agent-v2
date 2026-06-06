@@ -96,6 +96,9 @@ export interface MetricsData {
   elapsed_ms: number
   agent_calls: number
   tokens: Record<string, { input: number; output: number; ms: number }>
+  total_tokens?: number
+  total_elapsed_ms?: number
+  session_start_time?: number
 }
 
 /** 任务更新 (用于侧边栏任务列表) */
@@ -131,6 +134,15 @@ export interface ACPAgentInfo {
   cwd: string
   enabled: boolean
   available: boolean
+}
+
+/** 工作流信息 */
+export interface WorkflowInfo {
+  id: string
+  name: string
+  description?: string
+  enabled: boolean
+  nodes_count: number
 }
 
 /** 会话信息 */
@@ -171,6 +183,7 @@ export type SSEEventType =
   | 'thinking'
   | 'thinking_done'
   | 'tool_call'
+  | 'tool_call_update'
   | 'message'
   | 'summary'
   | 'error'
@@ -181,6 +194,8 @@ export type SSEEventType =
   | 'permission_request'
   | 'metrics'
   | 'interrupt'
+  | 'agent_thought_chunk'
+  | 'available_commands_update'
 
 /** SSE 事件结构 */
 export interface SSEEvent {

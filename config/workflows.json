@@ -1,0 +1,112 @@
+{
+  "workflows": [
+    {
+      "id": "data_analysis",
+      "name": "数据分析工作流",
+      "description": "收集、分析并总结数据，支持人工审批",
+      "enabled": true,
+      "nodes": [
+        {
+          "id": "collect",
+          "name": "数据采集",
+          "type": "agent",
+          "config": {
+            "agent_id": "researcher",
+            "agent_type": "single",
+            "task_template": "收集以下数据: {task}"
+          }
+        },
+        {
+          "id": "analyze",
+          "name": "数据分析",
+          "type": "agent",
+          "config": {
+            "agent_id": "analyst",
+            "agent_type": "single",
+            "task_template": "分析以下数据: {task}\n\n采集结果: {collect}"
+          }
+        },
+        {
+          "id": "approve",
+          "name": "审批确认",
+          "type": "approval",
+          "config": {
+            "message": "请确认数据分析结果是否正确"
+          }
+        },
+        {
+          "id": "finish",
+          "name": "完成",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {"from": "collect", "to": "analyze"},
+        {"from": "analyze", "to": "approve"},
+        {"from": "approve", "to": "finish"}
+      ]
+    },
+    {
+      "id": "code_review",
+      "name": "代码审查工作流",
+      "description": "自动审查代码质量，生成审查报告",
+      "enabled": true,
+      "nodes": [
+        {
+          "id": "review",
+          "name": "代码审查",
+          "type": "agent",
+          "config": {
+            "agent_id": "coder",
+            "agent_type": "single",
+            "task_template": "审查以下代码: {task}"
+          }
+        },
+        {
+          "id": "report",
+          "name": "生成报告",
+          "type": "agent",
+          "config": {
+            "agent_id": "analyst",
+            "agent_type": "single",
+            "task_template": "根据审查结果生成报告: {review}"
+          }
+        },
+        {
+          "id": "finish",
+          "name": "完成",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {"from": "review", "to": "report"},
+        {"from": "report", "to": "finish"}
+      ]
+    },
+    {
+      "id": "multi_agent_task",
+      "name": "多智能体协作",
+      "description": "使用 Orchestrator 进行多智能体协作",
+      "enabled": true,
+      "nodes": [
+        {
+          "id": "orchestrate",
+          "name": "多智能体编排",
+          "type": "agent",
+          "config": {
+            "agent_type": "multi",
+            "task_template": "{task}"
+          }
+        },
+        {
+          "id": "finish",
+          "name": "完成",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {"from": "orchestrate", "to": "finish"}
+      ]
+    }
+  ]
+}
