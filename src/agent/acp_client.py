@@ -48,11 +48,8 @@ class ACPClient:
         self._connected = False
         self._active_session_id: str | None = None
 
-    async def connect(self, message: str = ""):
-        """Start persistent ACP connection.
-
-        The message parameter is ignored in native mode (kept for backward compat).
-        """
+    async def connect(self):
+        """Start persistent ACP connection."""
         await self._ensure_native()
 
     async def _ensure_native(self):

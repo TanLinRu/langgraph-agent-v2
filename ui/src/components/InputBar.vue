@@ -5,6 +5,7 @@ import { fetchAgents, fetchAcpAgents, fetchWorkflows, type AgentInfo, type ACPAg
 const input = defineModel<string>({ default: '' })
 defineProps<{
   isProcessing: boolean
+  streamingActive?: boolean
   pendingCount?: number
   permissionPending?: boolean
 }>()
@@ -191,8 +192,9 @@ function handleSubmit() {
     <form :class="['input-bar', { queued: isProcessing }]" @submit.prevent="handleSubmit">
       <input
         v-model="input"
-        :placeholder="permissionPending ? '等待权限确认...' : (isProcessing ? (pendingCount ? `已排队 ${pendingCount} 条消息...` : 'Agent 处理中...') : '输入消息... @ 提及 Agent')"
+        :placeholder="permissionPending ? '等待权限确认...' : (streamingActive ? '正在接收响应...' : (isProcessing ? (pendingCount ? `已排队 ${pendingCount} 条消息...` : 'Agent 处理中...') : '输入消息... @ 提及 Agent'))"
         :disabled="permissionPending"
+        :class="{ 'input-streaming': !!streamingActive }"
         @input="onInput"
         @keydown="onKeydown"
         @blur="showDropdown = false"
@@ -204,7 +206,9 @@ function handleSubmit() {
         </svg>
         <span v-if="pendingCount" class="queue-count">{{ pendingCount }}</span>
       </span>
-      <button v-if="isProcessing" type="button" class="abort-btn" @click="emit('abort')" title="中断任务">
+      <button v-if="streamingActive" type="button" class="abort-btn streaming" @click="emit('abort')" title="中断任务">      </button>
+      <!-- Show abort during non-streaming processing too but as a fallback -->
+      <button v-else-if="isProcessing && !streamingActive" type="button" class="abort-btn" @click="emit('abort')" title="中断任务">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       </button>
       <!-- Send button when idle -->
@@ -289,6 +293,15 @@ function handleSubmit() {
   transition: color 0.3s ease;
   font-style: italic;
 }
+.input-bar input.input-streaming::placeholder { 
+  color: var(--accent-text); 
+  font-style: normal;
+  animation: streamPulse 1.5s ease-in-out infinite;
+}
+@keyframes streamPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
 .input-bar input:focus {
   border-color: var(--accent-focus);
   background: var(--bg-glass-hover);
@@ -356,6 +369,16 @@ function handleSubmit() {
   flex-shrink: 0;
   position: relative;
   overflow: hidden;
+}
+.abort-btn.streaming {
+  background: rgba(239,68,68,0.25);
+  border-color: rgba(239,68,68,0.5);
+  box-shadow: 0 0 16px rgba(239,68,68,0.25);
+  animation: abortPulse 1.2s ease-in-out infinite;
+}
+@keyframes abortPulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(239,68,68,0.25); }
+  50% { box-shadow: 0 0 24px rgba(239,68,68,0.45); }
 }
 .abort-btn::before {
   content: '';

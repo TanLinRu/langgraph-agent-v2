@@ -25,6 +25,82 @@ class ACPEvent:
     session_id: str = ""
 
 
+# ── Content Integrity Helpers ────────────────────────────────────
+
+
+def _extract_content_text(content_raw: list | dict) -> str:
+    """Extract plain text from ACP content array format."""
+    if isinstance(content_raw, list):
+        texts = []
+        for item in content_raw:
+            if isinstance(item, dict) and item.get("type") == "content":
+                inner = item.get("content", {})
+                if isinstance(inner, dict) and inner.get("type") == "text":
+                    texts.append(inner.get("text", ""))
+        return "\n".join(texts)
+    elif isinstance(content_raw, dict) and content_raw.get("type") == "text":
+        return content_raw.get("text", "")
+    return ""
+
+
+def _repair_content(text: str) -> str:
+    """Repair common content integrity issues from chunk assembly failures."""
+    if not text:
+        return text
+    if "\x00" in text:
+        logger.warning("[ACP content] null bytes detected, stripping")
+        text = text.replace("\x00", "")
+    fence_count = text.count("```")
+    if fence_count % 2 != 0:
+        logger.warning("[ACP content] unmatched code fence (%d), truncating", fence_count)
+        lines = text.split("\n")
+        fence_indices = [i for i, line in enumerate(lines) if line.strip().startswith("```")]
+        if fence_indices:
+            last_fence = fence_indices[-1]
+            text = "\n".join(lines[:last_fence])
+    if text and not text.endswith("\n"):
+        last_line = text.rsplit("\n", 1)[-1]
+        if len(last_line) > 500:
+            cut = text.rfind(". ", 0, len(text) - len(last_line) + 500)
+            if cut > 0:
+                text = text[:cut + 1]
+    return text
+
+
+def _is_garbled(text: str) -> bool:
+    """Heuristic check for garbled/corrupted agent output (warn-only, no data loss)."""
+    if not text:
+        return False
+    if "\x00" in text:
+        return True
+    printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\r\t")
+    if len(text) > 0 and printable / len(text) < 0.9:
+        return True
+    broken_markers = ["//", "/**", "/*"]
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if len(stripped) < 2:
+            continue
+        for marker in broken_markers:
+            if stripped.startswith(marker) and not stripped.startswith(marker * 2):
+                rest = stripped[len(marker):]
+                if not any(c.isalpha() for c in rest):
+                    return True
+    return False
+
+
+def _extract_tool_result(content_raw: list | dict, raw_output: dict) -> str:
+    """Extract tool result text with integrity repair."""
+    text = _extract_content_text(content_raw)
+    if not text:
+        output = raw_output.get("output", "")
+        text = str(output) if output else ""
+    return _repair_content(text)
+
+
+# ── Native ACP Client ───────────────────────────────────────────
+
+
 class ACPNativeClient:
     """Native ACP client using JSON-RPC 2.0 over stdio.
 
@@ -359,34 +435,64 @@ class ACPNativeClient:
 
         if update_type == "agent_message_chunk":
             if content_text:
+                if _is_garbled(content_text):
+                    logger.warning("[ACP] garbled message chunk: %r", content_text[:100])
                 events.append(ACPEvent(type="message", data=content_text, session_id=session_id))
 
         elif update_type == "agent_thought_chunk":
             if content_text:
+                if _is_garbled(content_text):
+                    logger.warning("[ACP] garbled thought chunk: %r", content_text[:100])
                 events.append(ACPEvent(type="thinking", data=content_text, session_id=session_id))
 
         elif update_type == "tool_call":
+            # Real ACP protocol: initial tool call (status=pending only)
+            tool_call_id = update.get("toolCallId", "")
+            name = update.get("title", update.get("toolName", ""))
+            kind = update.get("kind", "")
+            raw_input = update.get("rawInput", update.get("input", {}))
             status = update.get("status", "pending")
-            tool_name = update.get("toolName", "")
+            locations = update.get("locations", [])
             if status == "pending":
                 events.append(ACPEvent(type="tool_call", data={
-                    "name": tool_name,
-                    "args": update.get("input", {}),
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "kind": kind,
+                    "args": raw_input,
                     "status": "pending",
+                    "locations": locations,
                 }, session_id=session_id))
-            elif status == "in_progress":
+
+        elif update_type == "tool_call_update":
+            tool_call_id = update.get("toolCallId", "")
+            name = update.get("title", update.get("toolName", ""))
+            kind = update.get("kind", "")
+            status = update.get("status", "")
+            raw_input = update.get("rawInput", {})
+            raw_output = update.get("rawOutput", {})
+            if status == "in_progress":
                 events.append(ACPEvent(type="tool_call", data={
-                    "name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "kind": kind,
                     "status": "running",
+                    "locations": update.get("locations", []),
+                    "args": raw_input,
                 }, session_id=session_id))
             elif status == "completed":
+                result_text = _extract_tool_result(update.get("content", []), raw_output)
                 events.append(ACPEvent(type="tool_call", data={
-                    "name": tool_name,
-                    "result": str(update.get("output", "")),
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "kind": kind,
+                    "result": result_text,
                     "status": "completed",
                 }, session_id=session_id))
             elif status == "error":
-                events.append(ACPEvent(type="error", data=f"Tool '{tool_name}' failed: {update.get('error', '')}", session_id=session_id))
+                error_msg = update.get("error", "Unknown error")
+                events.append(ACPEvent(type="error",
+                    data=f"Tool '{name}' failed: {error_msg}",
+                    session_id=session_id))
 
         elif update_type == "usage_update":
             used = update.get("used", 0)

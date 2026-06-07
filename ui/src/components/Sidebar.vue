@@ -9,6 +9,8 @@ const emit = defineEmits<{ toggle: [] }>()
 
 const sessions = useSessionsStore()
 const theme = useThemeStore()
+import { buildEvalCaseFromSession } from '../utils/api'
+const evalRunning = ref<string | null>(null)
 const openCreateModal = inject<() => void>('openCreateModal', () => {})
 
 const renamingId = ref<string | null>(null)
@@ -57,6 +59,7 @@ function handleRenameKeydown(e: KeyboardEvent, sessionId: string) {
 }
 
 function robotType(title: string): string {
+  if (!title) return 'supervisor'
   const lower = title.toLowerCase()
   if (lower.includes('代码') || lower.includes('code') || lower.includes('重构')) return 'coder'
   if (lower.includes('研究') || lower.includes('research') || lower.includes('搜索')) return 'researcher'
@@ -92,6 +95,18 @@ function formatElapsed(updatedAt: string, nowRef: number): string {
 
 function handleNewSession() {
   openCreateModal()
+}
+
+async function handleEvalSession(sessionId: string, e: Event) {
+  e.stopPropagation()
+  if (evalRunning.value === sessionId) return
+  evalRunning.value = sessionId
+  try {
+    await buildEvalCaseFromSession(sessionId)
+  } catch (err: any) {
+    console.warn('eval session error', err)
+  }
+  evalRunning.value = null
 }
 
 function handleDelete(sessionId: string, e: Event) {
@@ -204,13 +219,18 @@ function handleDelete(sessionId: string, e: Event) {
             <span v-else-if="session.status === 'completed'" class="conv-duration">{{ formatDuration(session.duration_ms) }}</span>
             <div v-if="session.status === 'completed' && sessions.activeSessionId !== session.session_id" class="conv-unread"></div>
           </div>
+          <button class="conv-hover-eval" @click="handleEvalSession(session.session_id, $event)" :disabled="evalRunning === session.session_id" title="Build eval case from this session">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+        </button>
           <button class="conv-hover-delete" @click="handleDelete(session.session_id, $event)" title="删除">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-        </svg>
-      </button>
-      </div>
-      </div>
+          </svg>
+        </button>
+        </div>
+        </div>
 
       <!-- Empty state -->
       <div v-if="sessions.filteredSessions.length === 0 && !sessions.isLoading" class="conv-empty">
@@ -470,6 +490,39 @@ function handleDelete(sessionId: string, e: Event) {
   width: 8px; height: 8px; border-radius: 50%;
   background: #818cf8; box-shadow: 0 0 8px rgba(129,140,248,0.6);
   margin-top: 2px;
+}
+
+/* Eval button — hidden, shows on conv-item hover, slides in left of delete */
+.conv-hover-eval {
+  position: absolute; right: 52px; top: 0; bottom: 0;
+  width: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(52,211,153,0.85); border: none;
+  color: #fff; font-size: 13px; cursor: pointer;
+  z-index: 3;
+  transition: width 0.3s cubic-bezier(0.34,1.56,0.64,1), background 0.2s ease;
+}
+.conv-item:hover .conv-hover-eval {
+  width: 40px;
+  animation: evalSlideIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+}
+.conv-hover-eval:hover {
+  background: rgba(16,185,129,1);
+  box-shadow: -4px 0 12px rgba(52,211,153,0.3);
+}
+.conv-hover-eval:active {
+  transform: scale(0.95);
+}
+.conv-hover-eval:disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+.conv-hover-eval svg { width: 16px; height: 16px; flex-shrink: 0; }
+@keyframes evalSlideIn {
+  from { width: 0; opacity: 0; }
+  to { width: 40px; opacity: 1; }
+}
+@media (max-width: 768px) {
+  .conv-hover-eval { opacity: 0.7; }
 }
 
 /* Delete button — hidden, shows on conv-item hover as a slide-in overlay */

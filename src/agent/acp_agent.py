@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
+from src.agent._utils import extract_file_refs
 from src.agent.acp_client import ACPClient
 from src.agent.config_manager import get_config_manager
 from src.agent.db import get_acp_session_id, update_acp_session_id
@@ -68,6 +69,7 @@ class ACPAgent:
         """
         start_time = time.time()
         _event_count = 0
+        _thinking_done_yielded = False
 
         yield {"type": "thinking_start", "agent_name": self.agent_id}
 
@@ -88,20 +90,25 @@ class ACPAgent:
                     yield {"type": "thinking", "data": acp_event.data, "agent_name": self.agent_id}
                 elif acp_event.type == "tool_call":
                     tool_data = acp_event.data if isinstance(acp_event.data, dict) else {}
-                    if not tool_data.get("name"):
+                    name = tool_data.get("name") or tool_data.get("kind", "")
+                    if not name:
                         continue
+                    tool_data["name"] = name
                     yield {
                         "type": "tool_call",
                         "data": [tool_data],
                         "agent_name": self.agent_id,
                     }
                 elif acp_event.type == "message":
+                    if not _thinking_done_yielded:
+                        yield {"type": "thinking_done", "agent_name": self.agent_id}
+                        _thinking_done_yielded = True
                     elapsed_ms = int((time.time() - start_time) * 1000)
                     yield {
                         "type": "message",
                         "data": acp_event.data,
                         "agent_name": self.agent_id,
-                        "file_refs": _extract_file_refs(str(acp_event.data)),
+                        "file_refs": extract_file_refs(str(acp_event.data)),
                         "acp_session_id": session_acp_id or None,
                     }
                 elif acp_event.type == "metrics":
@@ -146,25 +153,12 @@ class ACPAgent:
             update_acp_session_id(session_id, session_acp_id)
             logger.info("[ACP] session mapping: chat=%s acp=%s", session_id, session_acp_id)
 
-        # Signal thinking done so frontend can reset thinking state
-        yield {"type": "thinking_done", "agent_name": self.agent_id}
+        if not _thinking_done_yielded:
+            yield {"type": "thinking_done", "agent_name": self.agent_id}
 
         elapsed_ms = int((time.time() - start_time) * 1000)
         logger.info("[ACP] agent=%s completed: %d events, %dms, acp_session=%s",
                     self.agent_id, _event_count, elapsed_ms, session_acp_id or "-")
-
-
-def _extract_file_refs(text: str) -> list[str]:
-    """Extract file paths from text."""
-    import re
-    patterns = [
-        re.compile(r'(?:src|docs|tests|ui|memory|config)[/\\][\w./\\-]+\.\w+'),
-        re.compile(r'[\w-]+\.(?:py|ts|js|vue|html|json|md|toml|yaml)'),
-    ]
-    refs = set()
-    for p in patterns:
-        refs.update(p.findall(text))
-    return list(refs)
 
 
 # ── ACP Agent Manager ──────────────────────────────────────────

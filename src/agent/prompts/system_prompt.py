@@ -44,11 +44,12 @@ Available agents:
 When given a task, analyze the context and available information first.
 Then output a JSON plan with the following structure:
 
-{{"steps": [{{"agent": "agent_name", "task": "subtask description", "depends_on": []}}], "reasoning": "explanation", "auto_approve": false}}
+{{"steps": [{{"agent": "agent_name", "task": "subtask description", "depends_on": []}}], "reasoning": "explanation", "auto_approve": false, "direct_reply": ""}}
 
 Rules:
-- Use **direct** for simple single-step tasks that don't need sub-agents
-- Use specialized agents for complex tasks
+- For simple factual answers, greetings, or trivial responses that need no tool execution, set "direct_reply": "your answer here" and leave "steps" as []. This skips all sub-agent dispatch and ends immediately.
+- If a workflow clearly matches the entire task (check "Available workflows" above), consider using "workflow:<workflow_id>" instead of composing multiple agents manually. Example: for "分析数据并生成报告", use "workflow:data_analysis".
+- Use specialized agents ONLY when no workflow matches the task
 - Each subtask must be self-contained
 - Set auto_approve=true only for single-step trivial tasks
 - Use depends_on for sequential dependencies
@@ -108,13 +109,22 @@ Execution results: {results}
 Errors: {errors}
 Review decision: {review_decision}
 
+Full conversation messages:
+{messages}
+
 Identify if any of these anti-patterns occurred (empty list if none):
 1. plan_drift: Plan included unnecessary or duplicate steps
-2. context_overload: Sub-agents received too much or too little context
+2. context_overload: Sub-agents received too much or too little context. Check if the same large context was sent repeatedly across the conversation.
 3. agent_confusion: Agent performed tasks outside its responsibility
 4. error_cascade: One agent's failure caused others to do useless work
 5. task_overlap: Multiple agents did similar or duplicate work
-6. hallucination_propagation: One agent's incorrect output was used as fact by another
+6. hallucination_propagation: One agent's incorrect output was used as fact by another. Trace claims across the conversation to find propagated errors.
+
+Use the full conversation transcript above to detect cross-turn patterns.
+Pay special attention to:
+- Whether later agents reference unverified claims from earlier agents
+- Whether the same error pattern appears across multiple rounds
+- Whether context was repeatedly re-sent verbatim
 
 Output JSON array format:
 [

@@ -83,7 +83,7 @@ def test_orchestrate_sse_format(client):
 
     mock_supervisor = MagicMock()
 
-    async def mock_run(task, history=None, summary=""):
+    async def mock_run(task, history=None, summary="", task_id="", session_id=""):
         yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
         yield {"type": "thinking", "data": "thinking...", "agent_name": "supervisor"}
         yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}
@@ -132,7 +132,7 @@ async def test_orchestrate_acp_dispatch(client):
 
     mock_supervisor = MagicMock()
 
-    async def mock_run(task, history=None, summary=""):
+    async def mock_run(task, history=None, summary="", task_id="", session_id=""):
         yield {"type": "thinking_start", "data": "", "agent_name": "supervisor"}
         yield {"type": "thinking", "data": "planning...", "agent_name": "supervisor"}
         yield {"type": "thinking_done", "data": "", "agent_name": "supervisor"}

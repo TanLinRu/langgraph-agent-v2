@@ -213,3 +213,25 @@ def update_acp_session_id(session_id: str, acp_session_id: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def save_plan(session_id: str, plan_json: str) -> None:
+    """持久化 plan 结构到 sessions.plan。"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE sessions SET plan = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+        (plan_json, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_audit_outputs(session_id: str, agent_outputs_json: str) -> None:
+    """持久化 agent_outputs 到 sessions.audit_outputs。"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE sessions SET audit_outputs = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+        (agent_outputs_json, session_id),
+    )
+    conn.commit()
+    conn.close()

@@ -112,18 +112,6 @@ export interface TaskUpdate {
   elapsedMs?: number
 }
 
-/** CLI/ACP 工具信息 */
-export interface CliInfo {
-  id: string
-  name: string
-  command: string
-  args: string[]
-  timeout: number
-  desc: string
-  enabled: boolean
-  mode?: string  // "cli" | "acp"
-}
-
 /** ACP 智能体信息 */
 export interface ACPAgentInfo {
   id: string
@@ -136,6 +124,21 @@ export interface ACPAgentInfo {
   available: boolean
 }
 
+interface NodeConfig {
+  id: string
+  type: 'agent' | 'approval' | 'finish' | 'start'
+  label: string
+  agent_type?: string
+  agent_id?: string
+  description?: string
+}
+
+interface EdgeConfig {
+  source: string
+  target: string
+  condition?: string
+}
+
 /** 工作流信息 */
 export interface WorkflowInfo {
   id: string
@@ -143,6 +146,18 @@ export interface WorkflowInfo {
   description?: string
   enabled: boolean
   nodes_count: number
+  nodes?: NodeConfig[]
+  edges?: EdgeConfig[]
+  start_node?: string
+}
+
+/** 工作流插入/更新请求 */
+export interface WorkflowUpsertRequest {
+  name: string
+  description?: string
+  nodes?: NodeConfig[]
+  edges?: EdgeConfig[]
+  start_node?: string
 }
 
 /** 会话信息 */
@@ -194,6 +209,7 @@ export type SSEEventType =
   | 'permission_request'
   | 'metrics'
   | 'interrupt'
+  | 'workflow_interrupted'
   | 'agent_thought_chunk'
   | 'available_commands_update'
 
@@ -205,4 +221,64 @@ export interface SSEEvent {
   agent_name?: string
   file_refs?: string[]
   steps?: Array<{ agent: string; task: string }>
+}
+
+// ── Eval ──────────────────────────────────────────────────────────────
+
+export interface EvalExpectation {
+  must_call_tools: string[]
+  must_not_call_tools: string[]
+  language: string | null
+  min_output_length: number
+  max_output_length: number
+  must_contain: string[]
+  must_not_contain: string[]
+  plan_steps: number | null
+  plan_agents: string[]
+  forbid_hallucinated_refs: boolean
+  custom: Record<string, unknown>[]
+}
+
+export interface EvalCase {
+  case_id: string
+  task: string
+  tags: string[]
+  expected: EvalExpectation
+  source_type: string
+  source_session_id: string | null
+  updated_at: string
+}
+
+export interface EvalResultItem {
+  assertion: string
+  passed: boolean
+  detail: string
+}
+
+export interface EvalRun {
+  task_id: string
+  case_id: string
+  session_id: string | null
+  thread_id: string | null
+  passed: boolean
+  failures: EvalResultItem[]
+  metrics_snapshot: Record<string, unknown>
+  config_snapshot: Record<string, unknown>
+  triggered_by: string
+  created_at: string
+}
+
+export interface EvalSuggestion {
+  id: number
+  dimension: string
+  target: string
+  current_value: string
+  suggested_value: string
+  reasoning: string
+  evidence: Record<string, unknown>[]
+  confidence: number
+  applied: boolean
+  applied_at: string
+  dismissed: boolean
+  created_at: string
 }

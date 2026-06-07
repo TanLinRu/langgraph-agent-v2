@@ -16,7 +16,6 @@ from src.agent.db.sessions import (
     update_session_project_path,
     update_session_status,
 )
-from src.agent.workflow.checkpoint_manager import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
@@ -65,17 +64,12 @@ class ContextManager:
         summary = get_session_summary(session_id)
         project_path = get_session_project_path(session_id)
 
-        # Try to load unfinished workflow state
-        checkpoint = await CheckpointManager.get_latest(session_id)
-
         return {
             "session_id": session_id,
             "history": history,
             "summary": summary,
             "project_path": project_path,
-            "current_graph_id": checkpoint.get("graph_id") if checkpoint else None,
-            "graph_state": checkpoint.get("state") if checkpoint else {},
-            "task_updates": [],  # Will be loaded from task_updates table if needed
+            "task_updates": [],
             "metrics": {},
             "audit_summary": "",
         }
@@ -102,21 +96,10 @@ class ContextManager:
             content = event.get("data", "")
             save_message(session_id, "ai", content, name="workflow")
 
-        elif event_type == "node_complete":
-            # Save checkpoint for workflow state
-            state = event.get("state", {})
-            await CheckpointManager.save(session_id, state)
-
         elif event_type == "workflow_complete":
-            # Clear workflow state
-            await CheckpointManager.clear(session_id)
-            # Update session status
             update_session_status(session_id, "active")
 
         elif event_type == "workflow_interrupted":
-            # Workflow paused (e.g., waiting for approval)
-            state = event.get("state", {})
-            await CheckpointManager.save(session_id, state)
             update_session_status(session_id, "waiting_approval")
 
         elif event_type == "error":
@@ -125,20 +108,15 @@ class ContextManager:
             save_message(session_id, "system", f"[Error] {event.get('data', '')}")
 
     @staticmethod
-    async def update_session_context(session_id: str, updates: dict[str, Any]) -> None:
+    def update_session_context(session_id: str, updates: dict[str, Any]) -> None:
         """Update session context with specific updates.
 
         Args:
             session_id: Session identifier
             updates: Dict of fields to update
         """
-        # Update project_path if provided
         if "project_path" in updates:
             update_session_project_path(session_id, updates["project_path"])
-
-        # If workflow execution, also update checkpoint
-        if updates.get("graph_state"):
-            await CheckpointManager.save(session_id, updates["graph_state"])
 
     @staticmethod
     def build_workflow_context(

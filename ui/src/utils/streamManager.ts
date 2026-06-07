@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type { ChatMessage, LogEntry, LogEntryType, MetricsData, PermissionRequest, TaskPhaseUpdate, TaskUpdate, SSEEvent } from './api'
-import { streamChatCallbacks, streamOrchestrate, streamOrchestrateReview, compactSession, restoreSession as apiRestoreSession } from './api'
+import { streamChatCallbacks, streamOrchestrate, streamOrchestrateReview, streamAgentSend, compactSession, restoreSession as apiRestoreSession } from './api'
 import { useSessionsStore } from '../stores/sessions'
 
 export function useStreamManager(
@@ -67,7 +67,7 @@ export function useStreamManager(
       if (state.display.length < state.full.length) {
         const next = Math.min(state.display.length + 2, state.full.length)
         state.display = state.full.slice(0, next)
-        msg.setContent(idx, state.display)
+        if (msg.messages.value[idx]) msg.messages.value[idx].thinking = state.display
         hasMore = true
       } else {
         state.done = true
@@ -207,9 +207,14 @@ export function useStreamManager(
           _enqueueStep(() => {
             ensureMsgIdx(agentName)
             if (msgIdx >= 0) {
-              const fullContent = event.data as string
-              if (fullContent) {
-                msg.initTypewriter(msgIdx, fullContent)
+              const chunk = event.data as string
+              if (chunk) {
+                if (msg.typewriterState.value[msgIdx]) {
+                  msg.typewriterState.value[msgIdx].full += chunk
+                  msg.typewriterState.value[msgIdx].done = false
+                } else {
+                  msg.initTypewriter(msgIdx, chunk)
+                }
                 _startTypewriter()
               }
               if (event.file_refs) msg.messages.value[msgIdx]!.fileRefs = event.file_refs as string[]
@@ -221,6 +226,32 @@ export function useStreamManager(
           })
         } else if (event.type === 'metrics') {
           msg.setMetrics(event.data as MetricsData)
+        } else if (event.type === 'task_update') {
+          const update = event.data as TaskUpdate
+          const now = Date.now()
+          const existing = msg.taskItems.value.findIndex(t => t.agent === update.agent && t.task === update.task)
+          if (existing >= 0) {
+            const merged: TaskUpdate = { ...msg.taskItems.value[existing], ...update }
+            if (update.status === 'running') merged.startedAt = now
+            if ((update.status === 'completed' || update.status === 'failed') && merged.startedAt) {
+              merged.endedAt = now; merged.elapsedMs = now - merged.startedAt
+            }
+            msg.taskItems.value[existing] = merged
+          } else {
+            const fresh: TaskUpdate = { ...update }
+            if (update.status === 'running') fresh.startedAt = now
+            msg.taskItems.value.push(fresh)
+          }
+          const agentIdx = msg.ensureAssistant(update.agent)
+          if (update.status === 'running') msg.setAgentStatus(agentIdx, 'working')
+          else if (update.status === 'completed') msg.setAgentStatus(agentIdx, 'done')
+          else if (update.status === 'failed') msg.setAgentStatus(agentIdx, 'failed')
+        } else if (event.type === 'workflow_interrupted') {
+          const d = event.data as { thread_id?: string; plan?: Record<string, unknown> | null }
+          if (d?.thread_id) {
+            pendingReview.value = { threadId: d.thread_id, plan: d.plan || null }
+            _enqueueImmediate(() => msg.addSystem('⏸ Workflow 已暂停，等待您的审核'))
+          }
         } else if (event.type === 'error') {
           _enqueueImmediate(() => msg.addError(String(event.data)))
         }
@@ -249,10 +280,15 @@ export function useStreamManager(
     currentPhase.value = null
     currentDispatch.value = null
     isLoading.value = true
+    streamingActive.value = true
     _appendLog('start', '开始调度任务', 'supervisor')
 
+    if (_abortController) _abortController.abort()
+    _abortController = new AbortController()
+    const signal = _abortController.signal
+
     try {
-      for await (const event of streamOrchestrate(task, sid)) {
+      for await (const event of streamOrchestrate(task, sid, signal)) {
         if (event.session_id) {
           sessionId.value = event.session_id
           useSessionsStore().activeSessionId = event.session_id
@@ -308,8 +344,9 @@ export function useStreamManager(
           }
           const idx = msg.ensureAssistant('supervisor')
           msg.messages.value[idx]!.content = displayText
-          if (msg.messages.value[idx]!.isThinking) msg.messages.value[idx]!.isThinking = false
+          msg.setThinkingDone(idx)
           _stopTypewriter()
+          _thinkChunkCount = 0
         } else if (event.type === 'tool_call') {
           await new Promise(r => setTimeout(r, STEP_DELAY_MS))
           const idx = msg.ensureAssistant(agentName)
@@ -384,7 +421,9 @@ export function useStreamManager(
         }
       }
     } catch (e: any) {
-      msg.addError(`Connection error: ${e.message}`)
+      if (e.name !== 'AbortError') {
+        msg.addError(`Connection error: ${e.message}`)
+      }
     } finally {
       _flushEventQueue()
       // HITL interrupt: don't mark pending tasks as failed (they'll resume)
@@ -421,8 +460,13 @@ export function useStreamManager(
     pendingReview.value = null
     _setSessionStatus('processing')
     _appendLog('decision', `用户审核: ${decision}`, 'user')
+
+    if (_abortController) _abortController.abort()
+    _abortController = new AbortController()
+    const signal = _abortController.signal
+
     try {
-      for await (const event of streamOrchestrateReview(sid, review.threadId, decision, feedback)) {
+      for await (const event of streamOrchestrateReview(sid, review.threadId, decision, feedback, signal)) {
         const agentName = event.agent_name || 'supervisor'
         if (event.type === 'thinking_start') {
           const idx = msg.ensureAssistant(agentName)
@@ -460,7 +504,7 @@ export function useStreamManager(
           }
           const idx = msg.ensureAssistant(agentName)
           msg.messages.value[idx]!.content = displayText
-          if (msg.messages.value[idx]!.isThinking) msg.messages.value[idx]!.isThinking = false
+          msg.setThinkingDone(idx)
           _stopTypewriter()
         } else if (event.type === 'message') {
           const idx = msg.ensureAssistant(agentName)
@@ -511,7 +555,9 @@ export function useStreamManager(
         }
       }
     } catch (e: any) {
-      msg.addError(`Review submission error: ${e.message}`)
+      if (e.name !== 'AbortError') {
+        msg.addError(`Review submission error: ${e.message}`)
+      }
     } finally {
       _flushEventQueue()
       msg.reconcileStreamEnd()
@@ -630,28 +676,32 @@ export function useStreamManager(
               }
             } else if (event.type === 'message') {
               if (msgIdx < 0) { msgIdx = msg.addAssistant(agentId); streamingActive.value = true }
-              const fullContent = event.data as string
-              if (fullContent) {
-                msg.initTypewriter(msgIdx, fullContent)
+              const chunk = event.data as string
+              if (chunk) {
+                if (msg.typewriterState.value[msgIdx]) {
+                  msg.typewriterState.value[msgIdx].full += chunk
+                  msg.typewriterState.value[msgIdx].done = false
+                } else {
+                  msg.initTypewriter(msgIdx, chunk)
+                }
                 _startTypewriter()
               }
               if (event.file_refs) msg.messages.value[msgIdx]!.fileRefs = event.file_refs as string[]
-              msg.setThinkingDone(msgIdx)
             } else if (event.type === 'thinking_done') {
-              if (msgIdx >= 0 && msg.thinkTypeState.value[msgIdx]) {
-                const ts = msg.thinkTypeState.value[msgIdx]
-                if (ts.done) {
-                  if (!msg.messages.value[msgIdx]?.thinking && ts.full) {
-                    msg.messages.value[msgIdx]!.thinking = ts.full
-                  }
-                  msg.setThinkingDone(msgIdx)
-                } else ts.pendingDone = true
-              } else if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
-            } else if (event.type === 'metrics') {
-              msg.setMetrics(event.data as MetricsData)
-            } else if (event.type === 'done') {
-              _acpDone = true
-              break
+          if (msgIdx >= 0 && msg.thinkTypeState.value[msgIdx]) {
+            const ts = msg.thinkTypeState.value[msgIdx]
+            if (ts.done) {
+              if (!msg.messages.value[msgIdx]?.thinking && ts.full) {
+                msg.messages.value[msgIdx]!.thinking = ts.full
+              }
+              msg.setThinkingDone(msgIdx)
+            } else ts.pendingDone = true
+          } else if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
+        } else if (event.type === 'metrics') {
+          msg.setMetrics(event.data as MetricsData)
+        } else if (event.type === 'done') {
+          _acpDone = true
+          break
             } else if (event.type === 'permission_request') {
               const data = event.data as PermissionRequest
               if (data) permissionRequest.value = data
@@ -674,6 +724,14 @@ export function useStreamManager(
     } finally {
       _flushEventQueue()
       msg.reconcileStreamEnd()
+      // Flush typewriter: write full content immediately so content div
+      // doesn't disappear when streamingActive goes false
+      if (msgIdx >= 0 && msg.typewriterState.value[msgIdx]) {
+        const st = msg.typewriterState.value[msgIdx]
+        msg.setContent(msgIdx, st.full)
+        st.display = st.full
+        st.done = true
+      }
       _setSessionStatus('completed')
       if (msgIdx >= 0) msg.setThinkingDone(msgIdx)
       const statusIdx = msg.messages.value.findIndex(m =>
@@ -682,6 +740,109 @@ export function useStreamManager(
       )
       if (statusIdx >= 0) msg.messages.value.splice(statusIdx, 1)
       permissionRequest.value = null
+      isLoading.value = false
+      streamingActive.value = false
+      _processPendingMessages()
+    }
+  }
+
+  async function sendSingleAgent(agentId: string, content: string) {
+    _setSessionStatus('processing')
+    if (_abortController) _abortController.abort()
+    _abortController = new AbortController()
+    isLoading.value = true
+    streamingActive.value = false
+
+    const taskItem: TaskUpdate = {
+      agent: agentId, task: content.slice(0, 50),
+      status: 'running', startedAt: Date.now(),
+    }
+    msg.taskItems.value = [taskItem]
+    _appendLog('start', `@${agentId} 执行中`, agentId)
+
+    try {
+      for await (const event of streamAgentSend(agentId, content, sessionId.value ?? undefined, _abortController!.signal)) {
+        const agentName = event.agent_name || agentId
+        if (event.session_id && !sessionId.value) {
+          sessionId.value = event.session_id
+        }
+        try {
+          if (event.type === 'thinking_start') {
+            const idx = msg.addAssistant(agentName)
+            msg.setThinkingStart(idx)
+            msg.initThinkTypewriter(idx)
+            streamingActive.value = true
+          } else if (event.type === 'thinking') {
+            const idx = msg.messages.value.length - 1
+            if (msg.thinkTypeState.value[idx]) {
+              msg.thinkTypeState.value[idx].full += (event.data as string)
+              _startTypewriter()
+            } else {
+              msg.appendThinking(idx, event.data as string)
+            }
+          } else if (event.type === 'thinking_done') {
+            const idx = msg.messages.value.length - 1
+            if (idx >= 0 && msg.thinkTypeState.value[idx]) {
+              const ts = msg.thinkTypeState.value[idx]
+              if (ts.done) {
+                if (!msg.messages.value[idx]?.thinking && ts.full) {
+                  msg.messages.value[idx]!.thinking = ts.full
+                }
+                msg.setThinkingDone(idx)
+              } else ts.pendingDone = true
+            } else if (idx >= 0) msg.setThinkingDone(idx)
+          } else if (event.type === 'tool_call') {
+            const idx = msg.messages.value.length - 1
+            msg.setHandoff(idx, agentId, agentName)
+            const tcs = event.data as Array<{ name: string; args: Record<string, unknown>; status?: string }>
+            _appendLog('tool_call', tcs[0]?.name || 'unknown', agentName)
+            msg.setAgentStatus(idx, 'working')
+            const resultTcs = tcs.filter(tc => tc.status === 'completed' || tc.status === 'result')
+            if (resultTcs.length > 0) {
+              msg.messages.value[idx]!.toolCalls = resultTcs as any
+              msg.clearCompletedToolCalls()
+            } else {
+              msg.messages.value[idx]!.toolCalls = tcs as any
+            }
+          } else if (event.type === 'message') {
+            const idx = msg.messages.value.length - 1
+            const chunk = event.data as string
+            if (chunk) {
+              if (msg.typewriterState.value[idx]) {
+                msg.typewriterState.value[idx].full += chunk
+                msg.typewriterState.value[idx].done = false
+              } else {
+                msg.initTypewriter(idx, chunk)
+              }
+              _startTypewriter()
+            }
+            if (event.file_refs) msg.messages.value[idx]!.fileRefs = event.file_refs as string[]
+          } else if (event.type === 'metrics') {
+            msg.setMetrics(event.data as MetricsData)
+          } else if (event.type === 'error') {
+            msg.addSystem(`⚠ ${event.data}`)
+          } else if (event.type === 'done') {
+            break
+          }
+        } catch { /* skip */ }
+      }
+      taskItem.status = 'completed'
+      taskItem.endedAt = Date.now()
+      taskItem.elapsedMs = taskItem.endedAt - (taskItem.startedAt || taskItem.endedAt)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') msg.addSystem(`⚠ @${agentId} 连接错误: ${e.message}`)
+      taskItem.status = 'failed'
+      taskItem.endedAt = Date.now()
+      taskItem.elapsedMs = taskItem.endedAt - (taskItem.startedAt || taskItem.endedAt)
+    } finally {
+      _flushEventQueue()
+      msg.reconcileStreamEnd()
+      _setSessionStatus('completed')
+      const statusIdx = msg.messages.value.findIndex(m =>
+        m.role === 'system' && !!m.content &&
+        (m.content.startsWith(`@${agentId} 执行中`) || m.content.startsWith(`@${agentId} 继续执行`))
+      )
+      if (statusIdx >= 0) msg.messages.value.splice(statusIdx, 1)
       isLoading.value = false
       streamingActive.value = false
       _processPendingMessages()
@@ -735,18 +896,18 @@ export function useStreamManager(
       const cmd = content.trim().toLowerCase()
       if (cmd === '/compact') { msg.addSystem(await handleCompact()); return }
       if (cmd === '/clear') {
-        const sid = sessionId.value
+        const sid = sessionId.value || useSessionsStore().activeSessionId
         if (sid) {
           try {
             const { clearSessionMessages } = await import('../utils/api')
             await clearSessionMessages(sid)
+            sessionId.value = sid
           } catch (e: any) {
             console.warn('/clear server sync failed:', e.message)
           }
         }
         msg.clear()
         msg.resetTaskItems()
-        sessionId.value = null
         return
       }
       if (cmd === '/new') {
@@ -817,7 +978,8 @@ export function useStreamManager(
           msg.addSystem(lines.join('\n'))
           return
         }
-        msg.addSystem(`Usage: /workflow [list|status|start <id>]  (alias: /wf)`)
+        // Not list/status — pass through to /chat endpoint (has command dispatcher)
+        sendMessage(content)
         return
       }
       msg.addSystem(`Unknown command: ${cmd}. Available: /compact, /clear, /new, /workflow`)
@@ -828,14 +990,23 @@ export function useStreamManager(
       const agentName = mentionMatch[1].toLowerCase()
       const cleanContent = content.replace(/@[\w-]+\s?/, '').trim()
       if (cleanContent) {
-        const available = await checkAcpAvailable(agentName)
-        if (!available) {
-          msg.addSystem(`⚠ ACP agent "${agentName}" is not available or not configured. Check config/acp_agents.json`)
+        // Check if ACP agent
+        const isAcp = await checkAcpAvailable(agentName)
+        if (isAcp) {
+          msg.addUser(content)
+          msg.addSystem(`@${agentName} 执行中...`)
+          await sendACP(agentName, cleanContent)
           return
         }
-        msg.addUser(content)
-        msg.addSystem(`@${agentName} 执行中...`)
-        await sendACP(agentName, cleanContent)
+        // Check if non-ACP agent exists in agents.json
+        const isAgent = await checkAgentExists(agentName)
+        if (isAgent) {
+          msg.addUser(content)
+          msg.addSystem(`@${agentName} 执行中...`)
+          await sendSingleAgent(agentName, cleanContent)
+          return
+        }
+        msg.addSystem(`⚠ Agent "${agentName}" not found. Check agents.json or acp_agents.json`)
         return
       }
     }
@@ -848,6 +1019,14 @@ export function useStreamManager(
       if (!res.ok) return false
       const data = await res.json()
       return data.available === true
+    } catch { return false }
+  }
+
+  async function checkAgentExists(agentId: string): Promise<boolean> {
+    try {
+      const { fetchAgents } = await import('../utils/api')
+      const agents = await fetchAgents()
+      return agents.some(a => a.id === agentId)
     } catch { return false }
   }
 
@@ -866,8 +1045,8 @@ export function useStreamManager(
     isLoading, streamingActive, thinkingChunks, eventLog,
     currentPhase, currentDispatch, pendingMessages, permissionRequest,
     pendingReview,
-    sendMessage, sendOrchestrate, sendACP, send, handleCompact,
+    sendMessage, sendOrchestrate, sendACP, sendSingleAgent, send, handleCompact,
     submitReview,
-    abort, abortAndSend, checkAcpAvailable,
+    abort, abortAndSend, checkAcpAvailable, checkAgentExists,
   }
 }

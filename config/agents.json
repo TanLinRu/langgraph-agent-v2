@@ -1,96 +1,57 @@
 {
   "agents": {
-    "supervisor": {
-      "name": "Supervisor",
-      "type": "supervisor",
-      "desc": "会话编排与任务调度",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
-      "tools": [],
-      "system_prompt": "You are a supervisor that coordinates multiple agents to complete tasks. Analyze the task, create a plan, and dispatch to appropriate sub-agents."
-    },
     "coder": {
-      "name": "Coder",
-      "type": "coder",
       "desc": "代码生成、调试与重构",
-      "enabled": true,
-      "model": null,
-      "temperature": 0.3,
-      "max_tokens": 8192,
       "tools": ["execute_code", "read_file", "write_file", "search_files", "load_skill"],
-      "system_prompt": "You are a coding expert. Write and execute code to solve problems. Think step by step. Always read relevant files before making changes.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce concrete output (code, files, results), not a description of what you will do.\n\nIMPORTANT: All output must be in Chinese."
+      "system_prompt": "您是一位编码专家。请直接执行，不要重复指令。所有输出使用中文。",
+      "temperature": 0.3,
+      "max_tokens": 8192
     },
     "researcher": {
-      "name": "Researcher",
-      "type": "researcher",
       "desc": "信息检索与文件搜索",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
       "tools": ["search_files", "list_directory", "read_file"],
-      "system_prompt": "You are a research expert. Search and analyze files to find information. Be thorough and cite specific file paths and line numbers.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce a structured report with headings, lists, and tables if applicable. Your output must contain actual research findings — not a plan or summary of what you will do.\n\nIMPORTANT: All output must be in Chinese."
+      "system_prompt": "您是一位研究专家。搜索并分析文件以查找信息。请直接执行，输出结构化报告。所有输出使用中文。",
+      "temperature": 0.0,
+      "max_tokens": 16384
     },
     "analyst": {
-      "name": "Analyst",
-      "type": "analyst",
       "desc": "数据分析与报告",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
       "tools": ["execute_code", "read_file", "search_files"],
-      "system_prompt": "You are a data analyst. Process data and generate insights. Use code to analyze data when needed.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce concrete analysis results with numbers, tables, and findings.\n\nIMPORTANT: All output must be in Chinese."
+      "system_prompt": "您是一位数据分析师。请直接处理数据生成洞察。所有输出使用中文。",
+      "temperature": 0.1,
+      "max_tokens": 16384
     },
-    "direct": {
-      "name": "Direct",
-      "type": "direct",
-      "desc": "直接助手，处理简单任务",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
-      "tools": ["execute_code", "read_file", "write_file", "list_directory", "search_files"],
-      "system_prompt": "You are a helpful assistant. Complete the task directly. Use tools only if needed.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task instruction. Produce the final answer directly.\n\nIMPORTANT: All output must be in Chinese."
+    "supervisor": {
+      "desc": "任务规划与问答 — 分析任务并决定直接答复还是拆分为多步代理执行",
+      "prompt_template": "SUPERVISOR_PLAN_PROMPT_V2",
+      "temperature": 0.2
+    },
+    "auditor": {
+      "desc": "审核子任务执行结果并做出 approve/revise/reject 决策",
+      "prompt_template": "AUDITOR_PROMPT",
+      "temperature": 0.1
+    },
+    "reflector": {
+      "desc": "从完整对话历史检测反模式，提取约束",
+      "prompt_template": "REFLECT_PROMPT",
+      "temperature": 0.0
+    },
+    "verifier": {
+      "desc": "事实核查与引用验证",
+      "tools": ["read_file", "search_files", "list_directory", "execute_code"],
+      "system_prompt": "您是一位事实核查专家。仅验证上游结果中已有的声明，不要添加新内容。输出结构化验证报告。所有输出使用中文。",
+      "temperature": 0.1,
+      "max_tokens": 4096
     },
     "opencode": {
-      "name": "OpenCode",
-      "type": "opencode",
       "desc": "外部 AI 编码代理 (OpenCode ACP)",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
-      "tools": [],
-      "system_prompt": "",
       "acp_mode": true,
       "acp_cli_id": "opencode"
     },
     "claude": {
-      "name": "Claude Code",
-      "type": "claude-agent",
       "desc": "外部 AI 编码代理 (Claude Code ACP)",
-      "enabled": true,
-      "model": null,
-      "temperature": null,
-      "max_tokens": null,
-      "tools": [],
-      "system_prompt": "",
       "acp_mode": true,
       "acp_cli_id": "claude"
-    },
-    "verifier": {
-      "name": "Verifier",
-      "type": "verifier",
-      "desc": "事实核查与引用验证",
-      "enabled": true,
-      "model": null,
-      "temperature": 0.1,
-      "max_tokens": 4096,
-      "tools": ["read_file", "search_files", "list_directory", "execute_code"],
-      "system_prompt": "You are a fact-checking and verification specialist. Your job is to verify claims, validate data accuracy, and check source reliability.\n\nCRITICAL: Start executing immediately. DO NOT repeat or paraphrase the task.\n\nFor each claim being verified:\n1. Check if file paths, line numbers, and code references actually exist\n2. Verify quantitative claims (GitHub Stars, version numbers, dates) by searching for evidence\n3. Flag unsupported assertions\n4. Report both confirmed facts and unverifiable claims\n\nOutput a structured verification report with sections: ✅ Confirmed, ⚠️ Needs Evidence, ❌ Incorrect.\n\nIMPORTANT: Only verify the claims and data provided in the upstream results from the previous agent. Do NOT add, analyze, or verify frameworks or data points not covered in the upstream output.\n\nIMPORTANT: All output must be in Chinese."
     }
   }
 }

@@ -3,10 +3,11 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -20,30 +21,33 @@ from src.agent.context.compression import ContextCompressor
 from src.agent.context.memory import MemoryManager
 from src.agent.db import (
     clear_session_messages,
-    compact_session as db_compact_session,
-)
-from src.agent.db import (
     create_session,
     delete_session,
     delete_task_updates_for_sessions,
-    get_session_summary,
     get_audit_summary,
     get_session_project_path,
-    save_audit_summary,
+    get_session_summary,
     get_tool_usage_stats,
     load_history,
     load_history_with_meta,
     load_metrics,
+    load_recent_context,
     load_task_updates,
     reconcile_session_tasks,
     rename_session,
+    save_audit_outputs,
+    save_audit_summary,
     save_message,
     save_metrics,
+    save_plan,
     save_task_update,
     save_turn,
     update_session_duration,
     update_session_project_path,
     update_session_status,
+)
+from src.agent.db import (
+    compact_session as db_compact_session,
 )
 from src.agent.db import (
     list_sessions as db_list_sessions,
@@ -52,8 +56,6 @@ from src.agent.file_service import build_file_tree, read_file_content
 from src.agent.orchestrator import Orchestrator
 from src.agent.workflow import (
     CommandDispatcher,
-    GraphConfigManager,
-    CheckpointManager,
 )
 from src.agent.workflow.graph_config_manager import get_graph_config_manager
 
@@ -177,6 +179,7 @@ class WorkflowUpsertRequest(BaseModel):
     enabled: bool | None = None
     nodes: list[dict] | None = None
     edges: list[dict] | None = None
+    start_node: str | None = None
 
 
 # ── Platform helpers ────────────────────────────────────────────
@@ -221,6 +224,7 @@ async def _passthrough(source):
     message_buf = ""
     thinking_meta: dict = {}
     message_meta: dict = {}
+    _thinking_done_yielded: set[str] = set()
 
     _min_thinking = 200
     _min_message  = 150
@@ -253,6 +257,16 @@ async def _passthrough(source):
                 yield {"type": "message", "data": message_buf, **message_meta}
                 message_buf = ""
 
+        elif etype == "thinking_done":
+            agent_name = event.get("agent_name", "")
+            if agent_name in _thinking_done_yielded:
+                continue
+            _thinking_done_yielded.add(agent_name)
+            if thinking_buf:
+                yield {"type": "thinking", "data": thinking_buf, **thinking_meta}
+                thinking_buf = ""
+            yield event
+
         else:
             if thinking_buf:
                 yield {"type": "thinking", "data": thinking_buf, **thinking_meta}
@@ -276,6 +290,8 @@ async def _orchestrate_stream(
     session_id: str,
     user_message: str,
     _start_time: float,
+    raw_request: Request | None = None,
+    task_id: str = "",
 ):
     """Non-batched wrap of orchestrator generator with persistence.
 
@@ -298,6 +314,7 @@ async def _orchestrate_stream(
                         session_id, "ai", _message_accum,
                         thinking=_thinking_accum or "",
                         name=_agent_name,
+                        task_id=task_id,
                     )
                 except Exception as save_err:
                     logger.warning("[ORCH] save_message failed: %s", save_err)
@@ -306,6 +323,9 @@ async def _orchestrate_stream(
 
     try:
         async for event in _passthrough(event_source):
+            if raw_request and await raw_request.is_disconnected():
+                logger.info("[ORCH] client disconnected, stopping stream (session=%s)", session_id)
+                return
             event["session_id"] = session_id
             _sse_idx += 1
             _agent_name = event.get("agent_name", "supervisor")
@@ -314,7 +334,7 @@ async def _orchestrate_stream(
 
             try:
                 if not _user_saved and user_message:
-                    save_message(session_id, "human", user_message)
+                    save_message(session_id, "human", user_message, task_id=task_id)
                     _user_saved = True
 
                 if etype == "message":
@@ -326,7 +346,10 @@ async def _orchestrate_stream(
                 elif etype == "plan":
                     _save_accumulated()
                     try:
-                        save_message(session_id, "ai", event.get("data", ""), name="plan")
+                        save_message(session_id, "ai", event.get("data", ""), name="plan", task_id=task_id)
+                        plan_json = event.get("plan_json", "")
+                        if plan_json:
+                            save_plan(session_id, plan_json)
                     except Exception as save_err:
                         logger.warning("[ORCH] save plan failed: %s", save_err)
                 elif etype == "tool_call":
@@ -334,7 +357,7 @@ async def _orchestrate_stream(
                     if tcs:
                         tc_json = json.dumps(tcs, ensure_ascii=False)
                         try:
-                            save_message(session_id, "ai", "", tool_calls=tc_json, name=_agent_name)
+                            save_message(session_id, "ai", "", tool_calls=tc_json, name=_agent_name, task_id=task_id)
                         except Exception as save_err:
                             logger.warning("[ORCH] save tool_call failed: %s", save_err)
                 elif etype == "task_update":
@@ -349,6 +372,7 @@ async def _orchestrate_stream(
                             started_at=tu.get("started_at"),
                             ended_at=tu.get("ended_at"),
                             elapsed_ms=tu.get("elapsed_ms"),
+                            task_id=task_id,
                         )
                     except Exception as save_err:
                         logger.warning("[ORCH] save_task_update failed: %s", save_err)
@@ -359,12 +383,16 @@ async def _orchestrate_stream(
                             session_id, "ai", event.get("data", ""),
                             thinking=_thinking_accum or None,
                             name="summary",
+                            task_id=task_id,
                         )
                     except Exception as save_err:
                         logger.warning("[ORCH] save summary failed: %s", save_err)
                 elif etype == "audit_summary":
                     try:
                         save_audit_summary(session_id, event.get("data", "") or "")
+                        agent_outputs = event.get("agent_outputs")
+                        if agent_outputs:
+                            save_audit_outputs(session_id, json.dumps(agent_outputs, ensure_ascii=False))
                     except Exception as save_err:
                         logger.warning("[ORCH] save_audit_summary failed: %s", save_err)
                 elif etype == "metrics":
@@ -400,13 +428,13 @@ async def _orchestrate_stream(
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
-    session_id = request.session_id or create_session()
+async def chat(raw_request: Request, body: ChatRequest):
+    session_id = body.session_id or create_session()
     update_session_status(session_id, "processing")
     _start_time = time.time()
 
     # Check if message starts with / (command)
-    if request.message.startswith("/"):
+    if body.message.startswith("/"):
         # Use CommandDispatcher for / commands
         dispatcher = CommandDispatcher(config)
 
@@ -417,7 +445,10 @@ async def chat(request: ChatRequest):
             _finally_done = False
 
             try:
-                async for event in _passthrough(dispatcher.dispatch(session_id, request.message)):
+                async for event in _passthrough(dispatcher.dispatch(session_id, body.message)):
+                    if await raw_request.is_disconnected():
+                        logger.info("[CHAT] client disconnected, stopping stream (session=%s)", session_id)
+                        return
                     event["session_id"] = session_id
                     _sse_idx += 1
                     etype = event.get("type", "")
@@ -429,7 +460,7 @@ async def chat(request: ChatRequest):
                         _finally_done = True
                         # Save final message
                         if _message_accum and _message_accum.strip():
-                            save_message(session_id, "human", request.message)
+                            save_message(session_id, "human", body.message)
                             save_message(session_id, "ai", _message_accum, thinking=_thinking_accum or "")
                     payload = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                     yield payload
@@ -450,15 +481,11 @@ async def chat(request: ChatRequest):
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache, no-transform",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
+            headers=SSE_HEADERS,
         )
 
     # Normal chat flow (non-command)
-    memory_context = get_memory().inject_context(request.message)
+    memory_context = get_memory().inject_context(body.message)
     history = load_history(session_id)
     # Load session summary from previous compaction
     session_summary = get_session_summary(session_id)
@@ -474,7 +501,10 @@ async def chat(request: ChatRequest):
         _sse_idx = 0
         _metrics_data = None
         try:
-            async for event in _passthrough(get_agent().run(request.message, memory_context, history, summary=session_summary)):
+            async for event in _passthrough(get_agent().run(body.message, memory_context, history, summary=session_summary)):
+                if await raw_request.is_disconnected():
+                    logger.info("[CHAT] client disconnected, stopping stream (session=%s)", session_id)
+                    return
                 event["session_id"] = session_id
                 _sse_idx += 1
                 if event["type"] == "thinking":
@@ -494,17 +524,17 @@ async def chat(request: ChatRequest):
                 await asyncio.sleep(0)
 
             if assistant_content:
-                save_turn(session_id, request.message, assistant_content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
+                save_turn(session_id, body.message, assistant_content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
                 _saved = True
             elif thinking_content:
-                save_turn(session_id, request.message, "[No response generated]", thinking=thinking_content, tool_calls=tool_calls_data)
+                save_turn(session_id, body.message, "[No response generated]", thinking=thinking_content, tool_calls=tool_calls_data)
                 _saved = True
         except Exception as e:
             logger.error("[CHAT] POST-stream error: %s", e, exc_info=True)
             if not _saved:
                 try:
                     content = assistant_content or f"[Error: {e}]"
-                    save_turn(session_id, request.message, content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
+                    save_turn(session_id, body.message, content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
                 except Exception as save_err:
                     logger.error("[CHAT] failed to save on error: %s", save_err)
             error_payload = f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
@@ -512,8 +542,8 @@ async def chat(request: ChatRequest):
         finally:
             if not _saved:
                 try:
-                    content = assistant_content or request.message
-                    save_turn(session_id, request.message, content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
+                    content = assistant_content or body.message
+                    save_turn(session_id, body.message, content, thinking=thinking_content, tool_calls=tool_calls_data, name=agent_name or None)
                 except Exception as save_err:
                     logger.error("[CHAT] POST-stream finally save error: %s", save_err)
             reconcile_session_tasks(session_id)
@@ -530,11 +560,7 @@ async def chat(request: ChatRequest):
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
     )
 
 
@@ -616,8 +642,9 @@ async def chat_stream(message: str = Query(...), session_id: str | None = Query(
 
 
 @app.post("/api/orchestrate")
-async def orchestrate(request: OrchestrateRequest):
-    session_id = request.session_id or create_session()
+async def orchestrate(raw_request: Request, body: OrchestrateRequest):
+    session_id = body.session_id or create_session()
+    task_id = str(uuid.uuid4())
     orchestrator = get_supervisor()
     update_session_status(session_id, "processing")
     _start_time = time.time()
@@ -626,10 +653,12 @@ async def orchestrate(request: OrchestrateRequest):
 
     return StreamingResponse(
         _orchestrate_stream(
-            orchestrator.run(request.task, history=history or None, summary=session_summary),
+            orchestrator.run(body.task, history=history or None, summary=session_summary, task_id=task_id, session_id=session_id),
             session_id=session_id,
-            user_message=request.task,
+            task_id=task_id,
+            user_message=body.task,
             _start_time=_start_time,
+            raw_request=raw_request,
         ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
@@ -637,17 +666,20 @@ async def orchestrate(request: OrchestrateRequest):
 
 
 @app.post("/api/orchestrate/{session_id}/review")
-async def review_plan(session_id: str, request: ReviewPlanRequest):
+async def review_plan(raw_request: Request, session_id: str, body: ReviewPlanRequest):
     """提交审核决策（approve/revise/reject），恢复被中断的 graph。"""
+    task_id = str(uuid.uuid4())
     orchestrator = get_supervisor()
     update_session_status(session_id, "processing")
     _start_time = time.time()
     return StreamingResponse(
         _orchestrate_stream(
-            orchestrator.resume(request.thread_id, request.decision, request.feedback),
+            orchestrator.resume(body.thread_id, body.decision, body.feedback, task_id=task_id, session_id=session_id),
             session_id=session_id,
+            task_id=task_id,
             user_message="",
             _start_time=_start_time,
+            raw_request=raw_request,
         ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
@@ -845,8 +877,9 @@ async def acp_send_message(request: dict):
     """
     agent_id = request.get("agent_id", "opencode")
     message = request.get("message", "")
-    context = request.get("context", "")
+    req_context = request.get("context", "")
     session_id = request.get("session_id", "") or ""
+    context = req_context or (load_recent_context(session_id) if session_id else "")
 
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
@@ -891,10 +924,6 @@ async def acp_send_message(request: dict):
                                 if valid_tc:
                                     tc_json = json.dumps(valid_tc, ensure_ascii=False)
                                     save_message(session_id, "ai", "", tool_calls=tc_json, name=agent_id)
-                        elif event["type"] == "thinking_done" and (message_content or thinking_content):
-                            save_message(session_id, "ai", message_content, thinking=thinking_content, name=agent_id)
-                            message_content = ""
-                            thinking_content = ""
                         elif event["type"] == "metrics":
                             _metrics_data = event.get("data", {})
                     except Exception as save_err:
@@ -930,11 +959,123 @@ async def acp_send_message(request: dict):
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+        headers=SSE_HEADERS,
+    )
+
+
+# ── Unified Agent Send (for @mention) ─────────────────────────
+
+
+class AgentSendRequest(BaseModel):
+    agent_id: str
+    message: str
+    session_id: str = ""
+
+
+@app.post("/api/agent/send")
+async def agent_send_message(body: AgentSendRequest):
+    """Unified endpoint for @mention single agent dispatch.
+
+    - Non-ACP agents (coder, researcher, etc.): inject session history as context
+    - ACP agents (opencode, claude): inject session summary as context
+    Both return SSE streams with the same event contract.
+    """
+    agent_id = body.agent_id
+    message = body.message
+    session_id = body.session_id
+
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    cm = get_config_manager()
+    agents_config = cm.get_agents()
+    agent_cfg = agents_config.get(agent_id)
+    if not agent_cfg:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    if session_id:
+        update_session_status(session_id, "processing")
+    _start_time = time.time()
+
+    is_acp = agent_cfg.get("acp_mode", False)
+
+    async def stream():
+        thinking_content = ""
+        message_content = ""
+        _user_saved = False
+        _metrics_data = None
+
+        try:
+            if is_acp:
+                acp_cli_id = agent_cfg.get("acp_cli_id", agent_id)
+                from src.agent.acp_agent import get_acp_agent
+                acp = get_acp_agent(acp_cli_id)
+                context = load_recent_context(session_id) if session_id else ""
+                event_source = acp.run(message, context=context, session_id=session_id)
+            else:
+                history = load_history_with_meta(session_id) if session_id else []
+                session_summary = get_session_summary(session_id) if session_id else ""
+                agent = Agent(AgentConfig())
+                event_source = agent.run(message, history=history or None, summary=session_summary)
+
+            async for event in _passthrough(event_source):
+                if session_id:
+                    event["session_id"] = session_id
+
+                if session_id:
+                    try:
+                        if not _user_saved:
+                            save_message(session_id, "human", message, name=agent_id)
+                            _user_saved = True
+
+                        if event["type"] == "thinking":
+                            thinking_content += event.get("data", "")
+                        elif event["type"] == "message":
+                            message_content += event.get("data", "")
+                        elif event["type"] == "tool_call":
+                            tc_list = event.get("data", [])
+                            if isinstance(tc_list, list):
+                                valid_tc = [t for t in tc_list if t.get("name")]
+                                if valid_tc:
+                                    tc_json = json.dumps(valid_tc, ensure_ascii=False)
+                                    save_message(session_id, "ai", "", tool_calls=tc_json, name=agent_id)
+                        elif event["type"] == "metrics":
+                            _metrics_data = event.get("data", {})
+                    except Exception as save_err:
+                        logger.warning("[AGENT] save_message failed: %s", save_err)
+
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
+
+            if session_id:
+                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error("[AGENT] send error: %s", e, exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e), 'session_id': session_id}, ensure_ascii=False)}\n\n"
+        finally:
+            if session_id:
+                if message_content or thinking_content:
+                    try:
+                        save_message(session_id, "ai", message_content, thinking=thinking_content, name=agent_id)
+                    except Exception as save_err:
+                        logger.warning("[AGENT] final save_message failed: %s", save_err)
+                duration_ms = int((time.time() - _start_time) * 1000)
+                try:
+                    metrics = _metrics_data or {"elapsed_ms": duration_ms, "agent_calls": 0, "tokens": {}}
+                    save_metrics(session_id, json.dumps(metrics, ensure_ascii=False))
+                except Exception as save_err:
+                    logger.warning("[AGENT] save_metrics failed: %s", save_err)
+                update_session_status(session_id, "completed")
+                update_session_duration(session_id, duration_ms)
+                logger.info("[AGENT] session=%s agent=%s completed: %dms", session_id, agent_id, duration_ms)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
     )
 
 
@@ -1363,31 +1504,145 @@ async def delete_workflow(workflow_id: str):
 
 @app.post("/api/workflow/approve")
 async def approve_workflow(request: WorkflowApproveRequest):
-    """Approve or reject a pending workflow approval."""
-    await CheckpointManager.approve(request.session_id, request.approved)
-    return {"status": "ok", "approved": request.approved}
+    """Approve or reject a pending workflow approval.
+
+    Note: Workflow approvals now go through the orchestrator's
+    interrupt/resume system via /api/orchestrate/{session_id}/review.
+    This endpoint is kept for backward compatibility.
+    """
+    return {"status": "ok", "approved": request.approved, "note": "Approval routed through orchestrator"}
 
 
 @app.get("/api/workflow/pending")
 async def list_pending_approvals():
-    """List all workflows waiting for approval."""
-    pending = await CheckpointManager.list_pending_approvals()
-    return {"pending": pending}
+    """List all workflows waiting for approval.
+
+    Note: Workflow approvals now go through the orchestrator's
+    interrupt/resume system via /api/orchestrate/{session_id}/review.
+    """
+    return {"pending": []}
 
 
 @app.get("/api/workflow/status/{session_id}")
 async def get_workflow_status(session_id: str):
     """Get current workflow status for a session."""
-    checkpoint = await CheckpointManager.get_latest(session_id)
-    if not checkpoint:
-        return {"status": "none", "detail": "No active workflow"}
+    from src.agent.orchestrator.core import _THREAD_CACHE
+    for tid, entry in _THREAD_CACHE.items():
+        try:
+            state = await entry["graph"].aget_state(entry["config"])
+            if state.next:
+                return {
+                    "status": "interrupted",
+                    "thread_id": tid,
+                    "next_nodes": list(state.next),
+                }
+        except Exception:
+            continue
+    return {"status": "none", "detail": "No active workflow"}
+
+
+# ── Eval ────────────────────────────────────────────────────────
+
+
+@app.get("/api/eval/cases")
+async def list_eval_cases():
+    """List all eval cases."""
+    from src.agent.eval.storage import list_cases
+    return list_cases()
+
+
+@app.get("/api/eval/cases/{case_id}")
+async def get_eval_case(case_id: str):
+    """Get a single eval case."""
+    from src.agent.eval.storage import get_latest_run, load_case
+    case = load_case(case_id)
+    if not case:
+        raise HTTPException(404, f"Case {case_id} not found")
+    latest = get_latest_run(case_id)
+    return {"case": case, "latest_run": latest}
+
+
+@app.post("/api/eval/cases/build")
+async def build_eval_cases(max_sessions: int = 50):
+    """Build eval cases from historical sessions."""
+    from src.agent.eval.case_builder import build_from_sessions
+    built = build_from_sessions(max_sessions=max_sessions)
+    return {"built": len(built), "cases": [c.case_id for c in built]}
+
+
+@app.post("/api/eval/cases/build-from-session/{session_id}")
+async def build_eval_case_from_session(session_id: str):
+    """Build an eval case from a specific session."""
+    from src.agent.eval.case_builder import build_from_session
+    case = build_from_session(session_id)
+    if not case:
+        raise HTTPException(400, f"Cannot build case from session {session_id} (no task or <2 msgs)")
+    return {"case": case.model_dump()}
+
+
+@app.post("/api/eval/cases/{case_id}/run")
+async def run_eval_case(case_id: str, mock: bool = False):
+    """Run an eval case."""
+    from src.agent.eval.runner import run_case
+    from src.agent.eval.storage import load_case
+    case = load_case(case_id)
+    if not case:
+        raise HTTPException(404, f"Case {case_id} not found")
+    cfg = {"triggered_by": "api"}
+    result = await run_case(case, cfg, mock_model=mock)
+    return result
+
+
+@app.post("/api/eval/run-all")
+async def run_all_eval_cases(mock: bool = False):
+    """Run all eval cases."""
+    from src.agent.eval.runner import run_cases
+    from src.agent.eval.storage import list_cases
+    cases = list_cases()
+    if not cases:
+        return {"message": "No cases to run"}
+    results = await run_cases(cases, {"triggered_by": "api"}, mock_model=mock)
+    return {"total": len(results), "passed": sum(1 for r in results if r.passed), "results": results}
+
+
+@app.get("/api/eval/runs")
+async def list_eval_runs(case_id: str | None = None):
+    """List eval runs, optionally filtered by case_id."""
+    from src.agent.eval.storage import list_runs
+    return list_runs(case_id=case_id)
+
+
+@app.get("/api/eval/trend/{case_id}")
+async def eval_trend(case_id: str):
+    """Show pass rate trend for a case."""
+    from src.agent.eval.storage import get_runs_in_range
+    runs = get_runs_in_range(days=30, case_id=case_id)
+    if not runs:
+        return {"message": "No runs found"}
+    total = len(runs)
+    passed = sum(1 for r in runs if r.passed)
     return {
-        "status": "active",
-        "graph_id": checkpoint.get("graph_id"),
-        "current_node": checkpoint.get("current_node"),
-        "is_interrupted": checkpoint.get("is_interrupted", False),
-        "pending_approval": checkpoint.get("pending_approval"),
+        "case_id": case_id,
+        "total": total,
+        "passed": passed,
+        "rate": round(passed / total, 3) if total else 0,
+        "runs": runs,
     }
+
+
+@app.get("/api/eval/suggestions")
+async def list_eval_suggestions(dimension: str | None = None):
+    """List optimization suggestions."""
+    from src.agent.eval.storage import list_suggestions
+    return list_suggestions(dimension=dimension)
+
+
+@app.post("/api/eval/analyze")
+async def run_analysis(days: int = 7):
+    """Run 5-dimension analysis."""
+    from src.agent.eval.analyzer import run_full_analysis
+    drafts = await run_full_analysis(days=days)
+    return {"generated": len(drafts), "suggestions": drafts}
 
 
 # ── Health ──────────────────────────────────────────────────────

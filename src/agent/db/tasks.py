@@ -26,14 +26,15 @@ def save_task_update(
     started_at: float | None = None,
     ended_at: float | None = None,
     elapsed_ms: int | None = None,
+    task_id: str = "",
 ) -> None:
     """写入一条任务状态变更记录 (追加,不修改历史)。"""
     conn = _get_conn()
     conn.execute(
         "INSERT INTO task_updates "
-        "(session_id, agent, task, status, state, started_at, ended_at, elapsed_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, agent, task, status, state, started_at, ended_at, elapsed_ms),
+        "(session_id, agent, task, status, state, started_at, ended_at, elapsed_ms, task_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, agent, task, status, state, started_at, ended_at, elapsed_ms, task_id),
     )
     conn.commit()
     conn.close()

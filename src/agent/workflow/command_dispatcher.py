@@ -12,10 +12,8 @@ from typing import Any
 
 from src.agent.agent import Agent
 from src.agent.config import AgentConfig
-from src.agent.orchestrator._events import make_done, make_error, make_message
-from src.agent.workflow.checkpoint_manager import CheckpointManager
+from src.agent.events import make_done, make_error, make_message
 from src.agent.workflow.context_manager import ContextManager
-from src.agent.workflow.dynamic_graph_engine import DynamicGraphEngine
 from src.agent.workflow.graph_config_manager import get_graph_config_manager
 
 logger = logging.getLogger(__name__)
@@ -33,6 +31,7 @@ class CommandDispatcher:
             "/new": self._handle_new,
             "/workflow": self._handle_workflow,
             "/wf": self._handle_workflow,  # Short alias
+            "/eval": self._handle_eval,
         }
 
     def _get_agent(self) -> Agent:
@@ -154,32 +153,14 @@ class CommandDispatcher:
             yield make_error("Please specify workflow ID. Example: /workflow data_analysis", session_id)
             return
 
-        # Get workflow configuration
-        graph_config_manager = get_graph_config_manager()
-        graph_config = graph_config_manager.get_graph(graph_id)
-
-        if not graph_config:
-            yield make_error(f"Workflow '{graph_id}' not found", session_id)
-            return
-
-        if not graph_config.get("enabled", True):
-            yield make_error(f"Workflow '{graph_id}' is disabled", session_id)
-            return
-
-        # Build workflow context
-        task = params or context.get("summary", "") or "Execute workflow"
-        workflow_context = ContextManager.build_workflow_context(
-            context, graph_id, task
-        )
-
-        # Execute workflow
-        engine = DynamicGraphEngine(graph_config, self.config)
-        async for event in engine.execute(session_id, workflow_context):
+        # Route to orchestrator, which handles workflow subgraph dispatch
+        from src.agent.orchestrator import Orchestrator
+        task = params or context.get("summary", "") or f"Execute workflow: {graph_id}"
+        history = context.get("history", [])
+        summary = context.get("summary", "")
+        orch = Orchestrator(self.config)
+        async for event in orch.run(task, history=history, summary=summary, session_id=session_id):
             yield event
-
-            # Update checkpoint on node completion
-            if event.get("type") == "node_complete":
-                await CheckpointManager.save(session_id, event.get("state", {}))
 
     async def _list_workflows(self) -> AsyncIterator[dict[str, Any]]:
         """List available workflows.
@@ -215,29 +196,45 @@ class CommandDispatcher:
         Yields:
             SSE events with workflow status
         """
-        checkpoint = await CheckpointManager.get_latest(session_id)
+        from src.agent.orchestrator.core import _THREAD_CACHE
+        wf_lines = []
+        for tid, entry in _THREAD_CACHE.items():
+            try:
+                state = entry["graph"].get_state(entry["config"])
+                wf_lines.append(f"Thread: {tid[:8]}...")
+                wf_lines.append(f"  Status: {'interrupted' if state.next else 'running'}")
+                if state.next:
+                    wf_lines.append(f"  Paused at: {', '.join(state.next)}")
+            except Exception:
+                continue
 
-        if not checkpoint:
+        if not wf_lines:
             yield make_message("system", "No active workflow")
-            yield make_done()
-            return
-
-        graph_id = checkpoint.get("graph_id", "unknown")
-        current_node = checkpoint.get("current_node")
-        is_interrupted = checkpoint.get("is_interrupted", False)
-        pending_approval = checkpoint.get("pending_approval")
-
-        lines = [f"Current workflow: {graph_id}"]
-        if current_node:
-            lines.append(f"  Current node: {current_node}")
-        if is_interrupted:
-            lines.append("  Status: Waiting for approval")
-            if pending_approval:
-                lines.append(f"  Pending: {pending_approval}")
         else:
-            lines.append("  Status: Running")
+            yield make_message("system", "\n".join(wf_lines))
+        yield make_done()
 
-        yield make_message("system", "\n".join(lines))
+    async def _handle_eval(
+        self,
+        session_id: str,
+        args: str | None,
+        params: str,
+        context: dict[str, Any],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Handle /eval command — regression testing and analysis.
+
+        Subcommands:
+            list       — List cases with latest status
+            run        — Run all cases
+            run <id>   — Run a single case
+            build      — Build cases from historical sessions
+            analyze    — Run 5-dimension analysis
+            trend      — Show pass rate trend
+            suggestions— List active optimization suggestions
+        """
+        from src.agent.eval.cli import handle_eval_command
+        result = await handle_eval_command(args)
+        yield make_message("system", result)
         yield make_done()
 
     async def _handle_compact(

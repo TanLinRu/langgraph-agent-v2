@@ -9,21 +9,21 @@
 | `python -m src.agent.main` | CLI single-shot (`--input`) or interactive (`--interactive`) |
 | `cd ui && npm run dev` | Vite dev server (port 3000, proxies `/api` to :8000) |
 | `cd ui && npx vue-tsc -b && npx vite build` | production build |
-| `pytest --cov=src -v` | all tests (94 tests, auto-isolated, no real API keys) |
+| `pytest --cov=src -v` | all tests (140 tests, auto-isolated, no real API keys) |
 | `pytest -k "test_name"` | single test |
 | `ruff check .` | lint gate. `ruff check . --fix` for auto-fixables |
 | `mypy src` | advisory only (pre-existing errors) |
 
 ## Architecture
 
-### Backend: 3 execution paths
+### Backend: 4 execution paths
 - **Agent** (`src/agent/agent/core.py`) — single ReAct loop, used by `/chat` endpoint
-- **Orchestrator** (`src/agent/orchestrator/core.py`) — LangGraph StateGraph with 6 nodes (perceive→plan→wait→dispatch→synthesize→reflect), used by `/api/orchestrate`
+- **Orchestrator** (`src/agent/orchestrator/core.py`) — LangGraph StateGraph with 5 nodes (plan→wait→dispatch→synthesize→reflect), used by `/api/orchestrate`
 - **ACP** (`src/agent/acp_agent.py`) — external CLI agent via JSON-RPC 2.0 over stdio
+- **Workflow Engine** (`src/agent/workflow/`) — DynamicGraphEngine executes JSON-defined DAG graphs from `config/workflows.json`, calling Agent/Orchestrator/ACP as node executors; supports approval gates. Triggered via `/api/workflows/*` or `/workflow` chat command.
 
 ### Orchestrator StateGraph
-- `perceive`: builds `history_summary` from prior messages + prior-cycle agent results
-- `plan`: LLM generates structured JSON `Plan` (steps with agent/task/depends_on). Conditional edge: if `auto_approve=false` and >1 step → `wait`, else → `dispatch`
+- `plan`: builds context summary from history + prior-cycle results, then LLM generates structured JSON `Plan` (steps with agent/task/depends_on). Conditional edge: if `auto_approve=false` and >1 step → `wait`, else → `dispatch`
 - `wait`: calls `interrupt()` to suspend graph; user reviews plan via `/api/orchestrate/{session_id}/review`
 - `dispatch`: executes sub-agents in DAG order; `depends_on` values are step **indices** (`"0"`, `"1"`), resolved via `step_index_map` to inject upstream outputs as context
 - `synthesize`: review/audit node. Conditional edge: `approve→reflect`, `revise→plan` (re-dispatch loop), `reject→__end__`
@@ -31,7 +31,9 @@
 - Graph paused via `interrupt()` after `wait`; resumed via `Command(resume=...)` on same `thread_id`
 
 ### Key packages
-- `orchestrator/` — core.py (StateGraph), planner.py (Plan/Step/GraphState models), tools.py (SubAgentTool, ACPSubAgentTool), _events.py (re-exports)
+- `orchestrator/` — core.py (StateGraph), planner.py (Plan/Step/GraphState models), tools.py (SubAgentTool, ACPSubAgentTool)
+- `workflow/` — DynamicGraphEngine (configurable JSON-defined DAG graphs), command_dispatcher.py (/workflow and /wf commands), context_manager.py, checkpoint_manager.py, graph_config_manager.py
+- `eval/` — offline regression evaluation framework: case_builder.py, runner.py, assertions.py, analyzer.py (5-dimension), storage.py, cli.py, models.py
 - `db/` — connection.py (auto-migration), sessions.py, messages.py, tasks.py, tools.py (save_metrics/load_metrics), compact.py
 - `agent/` — core.py (Agent class), streaming.py (file ref extraction)
 - `acp/` — client.py (ACPNativeClient: JSON-RPC over stdio subprocess)
@@ -41,10 +43,11 @@
 
 ### Config
 - `.env` → `AgentConfig` (`src/agent/config.py`). All fields nullable; `resolve_model()` throws if both API key and env var missing.
-- `config/agents.json` — 7 agents; ACP agents have `acp_mode: true` + `acp_cli_id`
+- `config/agents.json` — 8 agents (supervisor + 7 sub-agents); ACP agents have `acp_mode: true` + `acp_cli_id`
 - `config/acp_agents.json` — external CLI agent definitions (command, timeout, cwd)
 - `config/tools.json` — 5 tools (execute_code, read_file, write_file, list_directory, search_files)
 - `config/skills.json` — skill metadata with per-agent assignment
+- `config/workflows.json` — predefined workflow DAG definitions (nodes with type: agent/approval/finish, edges)
 - `ui/.env.development` sets `VITE_API_BASE=http://localhost:8000`
 - `config/agents.json` system_prompt for verifier scoped to "only verify claims present in upstream results"
 
@@ -56,6 +59,7 @@
 
 ### Storage
 - SQLite `memory/sessions.db` with auto-migration. ChromaDB in `memory/chroma/`. Agent memory in `memory/agent.db`.
+- Workflow checkpoints: separate SQLite `memory/workflow_checkpoints.db`.
 - Compaction (`compact.py`): marks old messages `compacted=1`, writes LLM summary to `sessions.summary`. `keep` param controls retained turns.
 - Metrics: JSON in `sessions.metrics` column. Audit summary: `sessions.audit_summary` column.
 
@@ -117,5 +121,6 @@ Orchestrator estimates tokens per agent as `len(text) * 1.5` (no real usage_meta
 ### Test quirks
 - `tests/conftest.py` auto-isolates env vars (mock keys, temp DB paths) — no real API keys needed.
 - Orchestrator tests mock `resolve_model` via `unittest.mock.patch("src.agent.models.resolve_model")`. The `from src.agent import models as _models` pattern makes this work.
+- Events are imported directly from `src.agent.events` (no `orchestrator/_events.py` shim).
 - No CI pipeline — all verification is local.
-- Main test file: `tests/test_orchestrator_v2.py` (v2 6-node graph). `tests/test_supervisor.py` tests the old 3-node graph.
+- Main test files: `test_orchestrator_v2.py` (v2 5-node graph), `test_supervisor.py` (old 3-node graph), `test_eval.py` (eval framework), `test_mock_flow.py` (truncation/memory/skills).

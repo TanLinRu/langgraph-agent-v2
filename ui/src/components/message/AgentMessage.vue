@@ -12,6 +12,7 @@ import { inject } from 'vue'
 import ConvAvatar from '../ConvAvatar.vue'
 import ThinkingBlock from '../ThinkingBlock.vue'
 import ToolCallBlock from '../ToolCallBlock.vue'
+import ToolCallGroup from '../ToolCallGroup.vue'
 import ToolResultBlock from '../ToolResultBlock.vue'
 import SummaryBlock from '../SummaryBlock.vue'
 import ErrorBlock from '../ErrorBlock.vue'
@@ -112,9 +113,18 @@ function statusLabel(s?: string): string {
         :done="!!msg.thinkingDone"
       />
 
-      <!-- 工具调用 -->
+      <!-- 工具调用 (单条或分组) -->
       <div v-if="msg.toolCalls?.length" class="tool-calls">
+        <ToolCallGroup
+          v-if="msg.toolCalls.length > 1"
+          :tools="msg.toolCalls.map(tc => ({
+            name: tc.name,
+            args: tc.args,
+            status: tc.status || 'done',
+          }))"
+        />
         <ToolCallBlock
+          v-else
           v-for="(tc, j) in msg.toolCalls"
           :key="j"
           :tool="{
@@ -171,13 +181,12 @@ function statusLabel(s?: string): string {
 </template>
 
 <style scoped>
-@import 'highlight.js/styles/github-dark.css';
 @import 'katex/dist/katex.min.css';
 
 /* Agent message wrapper */
 .msg-agent-wrap {
   display: flex; gap: 12px; align-items: flex-start;
-  align-self: flex-start; width: 85%;
+  align-self: flex-start; max-width: 85%; width: fit-content;
   animation: msgIn 0.35s cubic-bezier(0.16,1,0.3,1) both;
   transition: transform 0.2s ease, opacity 0.2s ease;
 }
@@ -207,21 +216,7 @@ function statusLabel(s?: string): string {
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   word-break: break-word;
   overflow-wrap: break-word;
-  overflow: hidden;
   position: relative;
-}
-.msg-agent-bubble::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 16px;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(129,140,248,0.05), rgba(167,139,250,0.08));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
 }
 .msg-agent-bubble:hover {
   transform: translateY(-2px);
@@ -249,8 +244,18 @@ function statusLabel(s?: string): string {
 @keyframes badgePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 /* Cursor */
-.stream-cursor { display: inline-block; width: 2px; height: 18px; background: var(--text-secondary); animation: blinkCursor 0.7s step-end infinite; vertical-align: text-bottom; margin-left: 2px; }
-@keyframes blinkCursor { 50% { opacity: 0; } }
+.stream-cursor {
+  display: inline-block; width: 2px; height: 1.1em;
+  background: var(--accent);
+  animation: blinkCursor 0.6s step-end infinite;
+  vertical-align: text-bottom; margin-left: 2px;
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(129,140,248,0.6);
+}
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
 
 /* File refs */
 .file-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
@@ -279,7 +284,7 @@ function statusLabel(s?: string): string {
 
 .tool-calls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; width: 100%; align-items: flex-start; }
 
-.msg-text { font-size: 16px; line-height: 1.7; font-weight: 450; color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; }
+.msg-text { font-size: 16px; line-height: 1.7; font-weight: 450; color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word; position: relative; z-index: 1; }
 
 /* Markdown styles */
 .md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(h4) { margin: 16px 0 8px; font-weight: 600; color: var(--text-primary); }
@@ -290,8 +295,9 @@ function statusLabel(s?: string): string {
 .md-body :deep(ul), .md-body :deep(ol) { margin: 6px 0; padding-left: 20px; }
 .md-body :deep(blockquote) { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--accent); background: var(--accent-bg); border-radius: 0 6px 6px 0; color: var(--text-secondary); }
 .md-body :deep(code) { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.9em; background: var(--bg-code); padding: 1px 5px; border-radius: 4px; color: var(--accent-text); }
-.md-body :deep(pre) { margin: 8px 0; padding: 12px; background: var(--bg-code); border-radius: 8px; overflow-x: auto; border: 1px solid var(--border-light); }
-.md-body :deep(pre code) { background: none; padding: 0; font-size: 13px; color: var(--text-secondary); }
+.md-body :deep(pre) { margin: 8px 0; padding: 0; background: transparent; border-radius: 8px; overflow-x: auto; border: 1px solid var(--border-light); }
+.md-body :deep(pre.shiki) { padding: 12px; background: var(--bg-code) !important; }
+.md-body :deep(pre.shiki code) { background: none; padding: 0; font-size: 13px; }
 .md-body :deep(table) { margin: 8px 0; border-collapse: collapse; width: 100%; font-size: 13px; }
 .md-body :deep(th), .md-body :deep(td) { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
 .md-body :deep(th) { background: var(--bg-glass); font-weight: 600; }
@@ -301,4 +307,10 @@ function statusLabel(s?: string): string {
 .md-body :deep(strong) { color: var(--text-primary); font-weight: 600; }
 .md-body :deep(.katex-display) { margin: 8px 0; padding: 8px 12px; background: var(--bg-code); border-radius: 6px; overflow-x: auto; }
 .md-body :deep(.katex) { font-size: 1.05em; color: var(--text-primary); }
+
+@media (max-width: 640px) {
+  .msg-agent-wrap { max-width: 98%; gap: 8px; }
+  .msg-agent-bubble { padding: 10px 14px; border-radius: 12px; border-bottom-left-radius: 5px; }
+  .msg-text { font-size: 15px; }
+}
 </style>

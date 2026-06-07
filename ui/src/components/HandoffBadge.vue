@@ -33,7 +33,7 @@ function labelFor(agent: string): string {
 <style scoped>
 .handoff-badge {
   display: inline-flex; align-items: center; gap: 6px;
-  align-self: flex-start; margin: 4px 0 8px 38px;
+  align-self: flex-start; margin: 4px 0 8px 0;
   background: rgba(148, 163, 184, 0.08);
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 6px;

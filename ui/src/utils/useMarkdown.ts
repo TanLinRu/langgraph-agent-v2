@@ -1,27 +1,40 @@
-/**
- * Markdown 渲染组合式函数
- *
- * 基于 marked + highlight.js + KaTeX 的 Markdown 渲染工具。
- * 支持代码高亮、数学公式 (行内 $$ 和块级 $$...$$)。
- */
-
 import { Marked } from 'marked'
-import { markedHighlight } from 'marked-highlight'
-import hljs from 'highlight.js'
+import { createHighlighter, type Highlighter } from 'shiki'
 import katex from 'katex'
 
-const marked = new Marked(
-  { breaks: true, gfm: true },
-  markedHighlight({
-    langPrefix: 'hljs language-',
-    highlight(code: string, lang: string) {
-      if (lang && hljs.getLanguage(lang)) {
-        return hljs.highlight(code, { language: lang }).value
-      }
-      return hljs.highlightAuto(code).value
+let highlighter: Highlighter | null = null
+createHighlighter({
+  langs: [
+    'ts', 'python', 'bash', 'json', 'yaml', 'html', 'css',
+    'vue', 'sql', 'markdown', 'xml', 'toml', 'ini', 'js',
+    'jsx', 'tsx', 'go', 'rust', 'shell', 'diff', 'text',
+  ],
+  themes: ['github-dark', 'github-light'],
+}).then(h => { highlighter = h })
+
+function shikiHighlight(code: string, lang: string): string {
+  if (!highlighter) {
+    return `<pre class="shiki"><code>${code.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`
+  }
+  try {
+    return highlighter.codeToHtml(code, {
+      lang: highlighter.getLoadedLanguages().includes(lang as any) ? lang as any : 'text',
+      themes: { dark: 'github-dark', light: 'github-light' },
+    })
+  } catch {
+    return `<pre class="shiki"><code>${code.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></pre>`
+  }
+}
+
+const marked = new Marked({
+  breaks: true,
+  gfm: true,
+  renderer: {
+    code({ text, lang }) {
+      return shikiHighlight(text, lang || 'text')
     },
-  }),
-)
+  },
+})
 
 function renderMath(tex: string, displayMode: boolean): string {
   try {
@@ -31,13 +44,6 @@ function renderMath(tex: string, displayMode: boolean): string {
   }
 }
 
-/**
- * 将 Markdown 文本渲染为 HTML,支持 KaTeX 数学公式。
- *
- * - $$...$$ → 块级公式
- * - $...$   → 行内公式
- * - 含中文的公式内容不会被解析 (启发式过滤)
- */
 export function renderMd(text: string): string {
   const blocks: string[] = []
   let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (_m, tex) => {

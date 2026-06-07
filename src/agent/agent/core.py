@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -32,12 +31,12 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 
+from src.agent._utils import extract_file_refs
 from src.agent.audit_logger import log_audit_event
 from src.agent.config import AgentConfig
 from src.agent.context._helpers import count_tokens
 from src.agent.context.compression import ContextCompressor
-from src.agent.models import resolve_model
-from src.agent.orchestrator._events import (
+from src.agent.events import (
     make_done,
     make_error,
     make_message,
@@ -47,23 +46,15 @@ from src.agent.orchestrator._events import (
     make_thinking_start,
     make_tool_call,
 )
+from src.agent.models import resolve_model
 from src.agent.tools import get_tools
 
 logger = logging.getLogger(__name__)
-
-# 文件路径提取正则 —— 从模型输出中识别代码库文件引用
-_FILE_PATH_RE = re.compile(r'(?:src|docs|tests|ui|memory|skills)[/\\][\w./\\-]+\.\w+')
-_CODE_FILE_RE = re.compile(r'[\w-]+\.(?:py|ts|js|vue|html|json|md|toml|yaml)')
 
 
 def _ts() -> str:
     """毫秒级时间戳,用于 SSE 追踪日志。"""
     return f"{time.time():.3f}"
-
-
-def _extract_file_refs(content: str) -> list[str]:
-    """从文本中提取文件路径引用。"""
-    return list(set(_FILE_PATH_RE.findall(content) + _CODE_FILE_RE.findall(content)))
 
 
 class Agent:
@@ -363,7 +354,7 @@ class Agent:
         final_content = "".join(content_parts)
 
         # 提取文件引用
-        file_refs = _extract_file_refs(final_content)
+        file_refs = extract_file_refs(final_content)
 
         self._log_response("agent", final_content, elapsed=_elapsed, trace_id=trace_id)
         logger.info(

@@ -10,7 +10,7 @@
  */
 
 export * from './api/types'
-export { streamChatCallbacks, streamChatFetch, streamOrchestrate, streamOrchestrateReview } from './api/sse'
+export { streamChatCallbacks, streamOrchestrate, streamOrchestrateReview, streamAgentSend } from './api/sse'
 export {
   listTools,
   fetchAcpAgents,
@@ -18,7 +18,6 @@ export {
   updateAgentConfig,
   fetchFileTree,
   fetchFileContent,
-  fetchCliList,
   listSessions,
   createSession,
   clearSessionMessages,
@@ -34,4 +33,16 @@ export {
   getSessionWorkflowStatus,
   fetchWorkflow,
   approveWorkflow,
+  upsertWorkflow,
+  deleteWorkflow,
+  listEvalCases,
+  getEvalCase,
+  buildEvalCases,
+  runEvalCase,
+  runAllEval,
+  listEvalRuns,
+  getEvalTrend,
+  listEvalSuggestions,
+  runEvalAnalysis,
+  buildEvalCaseFromSession,
 } from './api/endpoints'

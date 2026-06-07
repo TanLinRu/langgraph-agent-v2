@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import operator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict
 
@@ -36,6 +38,7 @@ class Plan(BaseModel):
     steps: list[Step]
     reasoning: str = ""
     auto_approve: bool = False
+    direct_reply: str = ""
 
 
 class AgentResult(BaseModel):
@@ -60,15 +63,45 @@ class GraphState(BaseModel):
     history: list[dict] = []
     history_summary: str = ""
     plan: Plan | None = None
-    results: dict[str, AgentResult] = {}
-    errors: list[str] = []
-    review_decision: str = ""
+    direct_reply: str = ""
+    results: Annotated[dict[str, AgentResult], operator.or_] = {}
+    errors: Annotated[list[str], operator.add] = []
+    review_decision: Annotated[str, lambda x, y: y if y else x] = ""
     review_feedback: str = ""
-    anti_patterns: list[AntiPattern] = []
+    anti_patterns: Annotated[list[AntiPattern], operator.add] = []
     constraints: list[str] = []
     step_count: int = 0
     max_steps: int = 20
     max_revisions: int = 3
+    session_id: str = ""
+    task_id: str = ""
+    current_step_idx: str = ""
+    executed_indices: Annotated[list[str], operator.add] = []
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class SubGraphState(BaseModel):
+    """State schema for workflow subgraphs — uses sub_ prefix to avoid key collisions with parent GraphState."""
+
+    sub_task: str
+    sub_history: list[dict] = []
+    sub_history_summary: str = ""
+    sub_plan: Plan | None = None
+    sub_direct_reply: str = ""
+    sub_results: dict[str, AgentResult] = {}
+    sub_errors: list[str] = []
+    sub_review_decision: str = ""
+    sub_review_feedback: str = ""
+    sub_anti_patterns: list[AntiPattern] = []
+    sub_constraints: list[str] = []
+    sub_step_count: int = 0
+    sub_max_steps: int = 20
+    sub_max_revisions: int = 3
+    sub_session_id: str = ""
+    sub_task_id: str = ""
+    sub_current_step_idx: str = ""
+    sub_executed_indices: list[str] = []
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -165,8 +198,6 @@ def build_agent_descriptions() -> str:
             lines.append(f"- **{agent_id}**: {desc}")
         else:
             lines.append(f"- **{agent_id}**")
-    if not any("direct" in line for line in lines):
-        lines.append("- **direct**: Direct reply for simple/single-step tasks")
     return "\n".join(lines)
 
 
@@ -197,6 +228,95 @@ def _convert_history(history: list[dict] | None) -> list[dict[str, str]]:
 
 
 # Register Plan with LangGraph checkpoint serializer
+# ── DAG 上下文构建 ─────────────────────────────────────────────
+
+
+def build_step_context(
+    step: Step,
+    step_index_map: dict[str, Step],
+    results: dict[str, AgentResult],
+    history_summary: str,
+) -> str:
+    """根据 depends_on 构建上游结果上下文。"""
+    dep_parts: list[str] = []
+    for dep_idx in step.depends_on:
+        dep_step = step_index_map.get(dep_idx)
+        if not dep_step:
+            continue
+        dep_name = dep_step.agent
+        dep_result = results.get(dep_name)
+        if dep_result and dep_result.result:
+            snippet = (dep_result.result[:2000] + "...") if len(dep_result.result) > 2000 else dep_result.result
+            dep_parts.append(
+                f"[Upstream: {dep_name}]\n"
+                f"Task: {dep_result.task}\n"
+                f"Output:\n{snippet}"
+            )
+    dep_section = "\n\n".join(dep_parts)
+    if dep_section and history_summary:
+        return f"{history_summary}\n\n--- Dependency Results ---\n{dep_section}"
+    if dep_section:
+        return f"Dependency Results:\n{dep_section}"
+    return history_summary
+
+
+# ── Reflect 消息加载 ────────────────────────────────────────────
+
+
+def load_messages_for_reflect(
+    session_id: str,
+    task_id: str | None = None,
+    end_time: str | None = None,
+    max_messages: int = 100,
+) -> str:
+    """加载 session 消息，按 task_id 或 end_time 过滤，格式化为对话文本供 reflect 分析。
+
+    两种查询模式:
+      1. (session_id, task_id) — 精确获取某次 orchestrate run 的所有消息
+      2. (session_id, end_time) — 获取截止到某个时间点的最近消息（覆盖本轮及最近几轮）
+
+    返回格式:
+      [role] name: content
+      ...
+    """
+    from src.agent.db.connection import _get_conn
+
+    conn = _get_conn()
+    if task_id:
+        rows = conn.execute(
+            "SELECT role, content, name, created_at FROM messages "
+            "WHERE session_id = ? AND task_id = ? AND compacted = 0 "
+            "ORDER BY id LIMIT ?",
+            (session_id, task_id, max_messages),
+        ).fetchall()
+    elif end_time:
+        rows = conn.execute(
+            "SELECT role, content, name, created_at FROM messages "
+            "WHERE session_id = ? AND created_at <= ? AND compacted = 0 "
+            "ORDER BY id DESC LIMIT ?",
+            (session_id, end_time, max_messages),
+        ).fetchall()
+        rows.reverse()
+    else:
+        rows = conn.execute(
+            "SELECT role, content, name, created_at FROM messages "
+            "WHERE session_id = ? AND compacted = 0 "
+            "ORDER BY id DESC LIMIT ?",
+            (session_id, max_messages),
+        ).fetchall()
+        rows.reverse()
+    conn.close()
+
+    lines: list[str] = []
+    for r in rows:
+        role = r[0]
+        content = (r[1] or "")[:500]
+        name = r[2] or ""
+        label = f"[{role}] {name}: " if name else f"[{role}] "
+        lines.append(f"{label}{content}")
+    return "\n".join(lines)
+
+
 try:
     from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
     JsonPlusSerializer.register_type(Plan, "src.agent.orchestrator.planner", "Plan")

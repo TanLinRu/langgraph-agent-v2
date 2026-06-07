@@ -72,7 +72,6 @@ class TestPlannerHelpers:
             mock_cm.return_value.get_agents.return_value = {
                 "coder": {"desc": "Writes code", "enabled": True},
                 "researcher": {"desc": "Finds info", "enabled": True},
-                "direct": {"desc": "Direct reply", "enabled": True},
             }
             from src.agent.orchestrator.planner import build_agent_descriptions
             desc = build_agent_descriptions()
@@ -107,7 +106,7 @@ class TestOrchestratorInit:
             config = AgentConfig()
             orch = Orchestrator(config)
             assert isinstance(orch.sub_agents, dict)
-            assert "direct" in orch.sub_agents
+            assert "coder" in orch.sub_agents
 
 
 # ── Orchestrator Run (v2 compat) ─────────────────────────────────
@@ -119,7 +118,7 @@ class TestOrchestratorRunCompat:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -152,7 +151,7 @@ class TestOrchestratorRunCompat:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -183,7 +182,7 @@ class TestOrchestratorRunCompat:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -236,7 +235,7 @@ class TestOrchestratorRunCompat:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit: looks good.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -264,7 +263,7 @@ class TestOrchestratorRunCompat:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "init"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "init"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="ACP audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])

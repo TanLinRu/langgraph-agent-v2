@@ -3,7 +3,7 @@
     {
       "id": "data_analysis",
       "name": "数据分析工作流",
-      "description": "收集、分析并总结数据，支持人工审批",
+      "description": "适用于：分析、统计、覆盖率报告、数据收集与总结等多步骤数据任务。自动完成数据采集→验证分析→报告生成，内置审批门控",
       "enabled": true,
       "nodes": [
         {
@@ -49,7 +49,7 @@
     {
       "id": "code_review",
       "name": "代码审查工作流",
-      "description": "自动审查代码质量，生成审查报告",
+      "description": "适用于：代码审查、代码质量检查、重构建议等代码相关任务。自动完成代码审查→生成报告",
       "enabled": true,
       "nodes": [
         {

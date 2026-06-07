@@ -17,6 +17,12 @@ env/
 htmlcov/
 memory/*.db
 memory/chroma/
+memory/audit/
+memory/langgraph_checkpoints.db-shm
+memory/langgraph_checkpoints.db-wal
+coverage_analysis.py
+coverage_report.md
+coverage_summary.json
 node_modules/
 ui/dist/
 *.log

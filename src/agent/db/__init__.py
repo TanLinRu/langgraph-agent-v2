@@ -29,6 +29,7 @@ from src.agent.db.messages import (
     load_history,
     load_history_with_meta,
     load_messages,
+    load_recent_context,
     save_message,
     save_turn,
 )
@@ -41,7 +42,9 @@ from src.agent.db.sessions import (
     get_session_summary,
     list_sessions,
     rename_session,
+    save_audit_outputs,
     save_audit_summary,
+    save_plan,
     session_exists,
     update_acp_session_id,
     update_session_duration,
@@ -58,6 +61,7 @@ from src.agent.db.tasks import (
 from src.agent.db.tools import get_tool_usage_stats, load_metrics, record_tool_usage, save_metrics
 
 __all__ = [
+    "clear_session_messages",
     "compact_session",
     "create_session",
     "delete_session",
@@ -72,14 +76,17 @@ __all__ = [
     "load_history",
     "load_history_with_meta",
     "load_messages",
+    "load_recent_context",
     "load_metrics",
     "load_task_updates",
     "reconcile_session_tasks",
     "record_tool_usage",
     "rename_session",
     "save_audit_summary",
+    "save_audit_outputs",
     "save_message",
     "save_metrics",
+    "save_plan",
     "save_task_update",
     "save_turn",
     "session_exists",

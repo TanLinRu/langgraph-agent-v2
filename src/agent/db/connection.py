@@ -100,6 +100,7 @@ def _get_conn() -> sqlite3.Connection:
     for col, dtype, default in [
         ("thinking", "TEXT", "DEFAULT ''"),
         ("compacted", "INTEGER", "DEFAULT 0"),
+        ("task_id", "TEXT", "DEFAULT ''"),
     ]:
         try:
             conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {dtype} {default}")
@@ -112,6 +113,71 @@ def _get_conn() -> sqlite3.Connection:
         conn.commit()
     except sqlite3.OperationalError:
         pass
+
+    # ── 渐进式 Migration: task_updates 表 ──────────────────
+    for col, dtype, default in [
+        ("task_id", "TEXT", "DEFAULT ''"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE task_updates ADD COLUMN {col} {dtype} {default}")
+        except sqlite3.OperationalError:
+            pass
+
+    # ── Eval: sessions 扩展列 ─────────────────────────────
+    for col, dtype, default in [
+        ("plan", "TEXT", "DEFAULT NULL"),
+        ("audit_outputs", "TEXT", "DEFAULT NULL"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {dtype} {default}")
+        except sqlite3.OperationalError:
+            pass
+
+    # ── Eval 表 ──────────────────────────────────────────────
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS eval_cases (
+            case_id TEXT PRIMARY KEY,
+            task TEXT NOT NULL,
+            tags TEXT DEFAULT '[]',
+            expected TEXT NOT NULL,
+            source_type TEXT DEFAULT 'manual',
+            source_session_id TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS eval_runs (
+            task_id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES eval_cases(case_id),
+            session_id TEXT,
+            thread_id TEXT,
+            passed INTEGER NOT NULL,
+            failures TEXT DEFAULT '[]',
+            metrics_snapshot TEXT,
+            config_snapshot TEXT,
+            triggered_by TEXT DEFAULT 'manual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_eval_runs_case ON eval_runs(case_id, created_at DESC)
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS eval_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dimension TEXT NOT NULL,
+            target TEXT NOT NULL,
+            current_value TEXT,
+            suggested_value TEXT,
+            reasoning TEXT,
+            evidence TEXT DEFAULT '[]',
+            confidence REAL DEFAULT 0.0,
+            applied INTEGER DEFAULT 0,
+            applied_at TIMESTAMP,
+            dismissed INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     conn.commit()
     return conn

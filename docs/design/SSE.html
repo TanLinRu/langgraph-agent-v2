@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Mavis Chat · SSE Demo v5 · Supervisor Standalone</title>
+<style>
+:root {
+  --bg: #0f0f0f;
+  --bg-elevated: #1a1a1a;
+  --bg-message: #232323;
+  --bg-panel: #161616;
+  --text: #ececec;
+  --text-dim: #8e8e8e;
+  --text-faint: #555;
+  --accent: #7c5cff;
+  --user-bubble: linear-gradient(135deg, #4a8eff 0%, #7c5cff 100%);
+  --border: #2a2a2a;
+
+  --sup-color: #fbbf24;
+  --researcher: #60a5fa;
+  --coder: #c084fc;
+  --analyst: #4ade80;
+  --writer: #f472b6;
+
+  --thinking-bg: rgba(124, 92, 255, 0.08);
+  --thinking-border: rgba(124, 92, 255, 0.25);
+  --tool-bg: rgba(251, 146, 60, 0.08);
+  --tool-border: rgba(251, 146, 60, 0.35);
+  --result-bg: rgba(34, 197, 94, 0.06);
+  --result-border: rgba(34, 197, 94, 0.3);
+  --summary-bg: rgba(59, 130, 246, 0.08);
+  --summary-border: rgba(59, 130, 246, 0.3);
+  --error-bg: rgba(239, 68, 68, 0.08);
+  --error-border: rgba(239, 68, 68, 0.35);
+  --handoff-bg: rgba(148, 163, 184, 0.06);
+  --handoff-border: rgba(148, 163, 184, 0.25);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  background: var(--bg); color: var(--text);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* === Header === */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.header h1 { font-size: 14px; font-weight: 600; }
+.header h1 span { color: var(--text-dim); font-weight: 400; margin-left: 8px; font-size: 12px; }
+.scenarios { display: flex; gap: 6px; }
+.scenario-btn {
+  background: var(--bg-message); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 12px; font-size: 12px; cursor: pointer;
+  transition: all 0.2s; display: flex; align-items: center; gap: 4px;
+}
+.scenario-btn:hover { color: var(--text); border-color: var(--accent); }
+.scenario-btn.active {
+  background: var(--accent); color: white; border-color: var(--accent);
+}
+.scenario-btn.sup-btn.active { background: var(--sup-color); border-color: var(--sup-color); color: #1a1a1a; }
+.scenario-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* === Topology Bar (Supervisor only) === */
+.topology-bar {
+  padding: 14px 20px; background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg) 100%);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+  position: relative; display: none;
+}
+.topology-bar.show { display: block; }
+.topology-svg { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.topology-svg line { stroke: var(--border); stroke-width: 1.5; transition: stroke 0.3s, stroke-width 0.3s; }
+.topology-svg line.flow {
+  stroke: var(--sup-color); stroke-width: 2;
+  stroke-dasharray: 6 4; animation: dash 0.6s linear infinite;
+}
+.topology-svg line.flow-result {
+  stroke: var(--result-border); stroke-width: 2;
+  stroke-dasharray: 6 4; animation: dash 0.6s linear infinite reverse;
+}
+.topology-svg line.peer {
+  stroke: var(--writer); stroke-width: 1.8;
+  stroke-dasharray: 4 3; animation: dash 0.8s linear infinite;
+}
+@keyframes dash { to { stroke-dashoffset: -10; } }
+.topology {
+  display: flex; align-items: center; justify-content: space-between;
+  position: relative; z-index: 1; gap: 12px;
+}
+.supervisor {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 14px; background: var(--bg-message); border-radius: 10px;
+  border: 2px solid transparent; transition: all 0.3s; min-width: 110px; position: relative;
+}
+.supervisor.delegating { border-color: var(--sup-color); box-shadow: 0 0 16px rgba(251, 191, 36, 0.4); }
+.supervisor.aggregating { border-color: var(--result-border); box-shadow: 0 0 16px rgba(34, 197, 94, 0.3); }
+.supervisor.idle { opacity: 0.5; }
+.supervisor .icon { font-size: 22px; }
+.supervisor .name { font-size: 12px; font-weight: 600; color: var(--sup-color); }
+.supervisor .status { font-size: 10px; color: var(--text-dim); }
+.supervisor .pulse-ring {
+  position: absolute; inset: -4px; border-radius: 14px; border: 2px solid var(--sup-color);
+  opacity: 0; pointer-events: none;
+}
+.supervisor .pulse-ring.active { animation: pulseRing 1.2s ease-out; }
+@keyframes pulseRing {
+  0% { opacity: 0.8; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+
+.workers { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.worker {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 12px; background: var(--bg-message); border-radius: 10px;
+  border: 2px solid transparent; transition: all 0.3s; min-width: 90px; position: relative;
+  --worker-color: var(--accent);
+}
+.worker.idle { opacity: 0.45; }
+.worker.thinking { border-color: var(--accent); box-shadow: 0 0 12px rgba(124, 92, 255, 0.3); }
+.worker.working {
+  border-color: var(--worker-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--worker-color) 35%, transparent);
+}
+.worker.done { border-color: var(--result-border); background: rgba(34, 197, 94, 0.05); }
+.worker.failed { border-color: var(--error-border); }
+.worker .icon { font-size: 18px; }
+.worker .name { font-size: 11px; font-weight: 600; color: var(--worker-color); }
+.worker .status { font-size: 9px; color: var(--text-faint); }
+
+/* === Main === */
+.main { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+.chat-area { flex: 1; overflow-y: auto; padding: 20px 0; }
+.chat-area::-webkit-scrollbar { width: 6px; }
+.chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* === Messages === */
+.msg { padding: 14px 24px; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.msg-user { display: flex; justify-content: flex-end; }
+.bubble-user {
+  max-width: 70%; padding: 10px 16px;
+  background: var(--user-bubble); color: white;
+  border-radius: 18px; font-size: 14px; line-height: 1.5;
+}
+.msg-agent { display: flex; flex-direction: column; gap: 8px; }
+.msg-supervisor { border-left: 2px solid var(--sup-color); padding-left: 22px; margin-left: 12px; background: rgba(251, 191, 36, 0.03); }
+.agent-header {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--text-dim);
+}
+.agent-avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; background: var(--bg-message);
+  border: 1.5px solid var(--agent-color, var(--accent));
+  color: var(--agent-color, var(--accent));
+}
+.agent-avatar.sup { background: rgba(251, 191, 36, 0.15); border-width: 2px; }
+.agent-name { font-weight: 600; color: var(--agent-color, var(--accent)); }
+.agent-tag { background: var(--bg-message); color: var(--text-faint); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+.agent-body { padding-left: 38px; display: flex; flex-direction: column; gap: 8px; }
+.handoff-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--handoff-bg); border: 1px solid var(--handoff-border);
+  border-radius: 6px; padding: 4px 10px; font-size: 11px; color: var(--text-dim);
+  align-self: flex-start; margin-bottom: 4px;
+}
+.handoff-badge .arrow { color: var(--sup-color); }
+
+/* === Thinking === */
+.thinking {
+  background: var(--thinking-bg);
+  border: 1px solid var(--thinking-border);
+  border-radius: 8px; font-size: 13px; color: var(--text-dim);
+  overflow: hidden;
+}
+.thinking-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+}
+.thinking-head:hover { color: var(--text); }
+.thinking-arrow { font-size: 10px; transition: transform 0.2s; }
+.thinking.open .thinking-arrow { transform: rotate(90deg); }
+.thinking-text { flex: 1; font-style: italic; }
+.thinking-dots::after {
+  content: '...'; display: inline-block; animation: dots 1.2s steps(4) infinite;
+  width: 1em; text-align: left;
+}
+@keyframes dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+.thinking-body {
+  max-height: 0; overflow: hidden; transition: max-height 0.3s ease;
+  padding: 0 12px; white-space: pre-wrap; line-height: 1.5;
+  border-top: 0px solid var(--thinking-border);
+}
+.thinking.open .thinking-body {
+  max-height: 400px; padding: 8px 12px 12px;
+  border-top: 1px solid var(--thinking-border);
+}
+
+/* === Tool Call === */
+.tool-call {
+  background: var(--tool-bg);
+  border-left: 3px solid var(--tool-border);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+.tool-call .label { color: var(--tool-border); font-weight: 600; margin-right: 8px; }
+.tool-call .name { color: var(--text); }
+.tool-call .args { color: var(--text-dim); margin-top: 4px; font-size: 12px; white-space: pre-wrap; }
+
+.tool-result {
+  background: var(--result-bg);
+  border-left: 3px solid var(--result-border);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px;
+  font-family: 'SF Mono', Consolas, monospace; color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+/* === Text streaming === */
+.text-stream { font-size: 14px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
+.text-stream .cursor {
+  display: inline-block; width: 2px; height: 1em;
+  background: var(--agent-color, var(--accent));
+  margin-left: 2px; vertical-align: text-bottom;
+  animation: blink 0.8s infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.code-block {
+  background: #0a0a0a; border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px; margin: 8px 0;
+  font-family: 'SF Mono', Consolas, monospace; font-size: 13px;
+  line-height: 1.5; overflow-x: auto; white-space: pre;
+}
+
+/* === Summary === */
+.summary {
+  background: var(--summary-bg);
+  border-left: 3px solid var(--summary-border);
+  border-radius: 6px; padding: 10px 12px; font-size: 13px;
+  margin-top: 4px;
+}
+.summary .label {
+  color: var(--summary-border); font-weight: 600;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 4px; display: block;
+}
+
+/* === Error === */
+.error-block {
+  background: var(--error-bg);
+  border-left: 3px solid var(--error-border);
+  border-radius: 6px; padding: 10px 12px; font-size: 13px;
+}
+.error-block .label { color: var(--error-border); font-weight: 600; }
+
+/* === Event Log === */
+.event-log {
+  width: 300px; background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+.log-header {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.log-header .count { background: var(--bg-message); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.log-list { flex: 1; overflow-y: auto; padding: 8px; }
+.log-list::-webkit-scrollbar { width: 4px; }
+.log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.log-item {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 6px 8px; border-radius: 4px; font-size: 11px;
+  font-family: 'SF Mono', Consolas, monospace; color: var(--text-dim);
+  animation: logIn 0.2s ease;
+}
+@keyframes logIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+.log-item:hover { background: var(--bg-message); }
+.log-time { color: var(--text-faint); flex-shrink: 0; }
+.log-type { font-weight: 600; min-width: 36px; flex-shrink: 0; }
+.log-type.t1 { color: var(--text); }
+.log-type.t6 { color: var(--researcher); }
+.log-type.t7 { color: #fb923c; }
+.log-type.t8 { color: var(--result-border); }
+.log-type.t9 { color: var(--summary-border); }
+.log-type.t11 { color: var(--error-border); }
+.log-type.t12 { color: var(--sup-color); }
+.log-type.t13 { color: var(--writer); }
+.log-content { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+
+/* === Toast === */
+.toast-container {
+  position: fixed; top: 80px; right: 320px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.toast {
+  background: var(--bg-elevated); border: 1px solid var(--sup-color);
+  border-radius: 8px; padding: 8px 14px; font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
+  display: flex; align-items: center; gap: 8px;
+}
+.toast .icon { font-size: 16px; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+
+/* === Input bar === */
+.input-bar {
+  padding: 12px 20px; background: var(--bg-elevated);
+  border-top: 1px solid var(--border); flex-shrink: 0;
+  display: flex; gap: 10px; align-items: center;
+}
+.input-hint { color: var(--text-faint); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Mavis Chat <span>· SSE Demo v5 · Supervisor 独立演示</span></h1>
+  <div class="scenarios">
+    <button class="scenario-btn" data-scenario="researcher">🔍 Researcher</button>
+    <button class="scenario-btn" data-scenario="coder">💻 Coder</button>
+    <button class="scenario-btn" data-scenario="chain">⛓️ Chain</button>
+    <button class="scenario-btn sup-btn" data-scenario="supervisor">🎯 Supervisor</button>
+  </div>
+</div>
+
+<div class="topology-bar" id="topologyBar">
+  <svg class="topology-svg" id="topologySvg"></svg>
+  <div class="topology">
+    <div class="supervisor idle" id="node-sup">
+      <div class="pulse-ring" id="pulseSup"></div>
+      <div class="icon">🎯</div>
+      <div class="name">Supervisor</div>
+      <div class="status" id="statusSup">空闲</div>
+    </div>
+    <div class="workers">
+      <div class="worker idle" id="node-researcher" style="--worker-color: var(--researcher);">
+        <div class="icon">🔍</div>
+        <div class="name">Researcher</div>
+        <div class="status" id="status-researcher">空闲</div>
+      </div>
+      <div class="worker idle" id="node-coder" style="--worker-color: var(--coder);">
+        <div class="icon">💻</div>
+        <div class="name">Coder</div>
+        <div class="status" id="status-coder">空闲</div>
+      </div>
+      <div class="worker idle" id="node-analyst" style="--worker-color: var(--analyst);">
+        <div class="icon">📊</div>
+        <div class="name">Analyst</div>
+        <div class="status" id="status-analyst">空闲</div>
+      </div>
+      <div class="worker idle" id="node-writer" style="--worker-color: var(--writer);">
+        <div class="icon">✍️</div>
+        <div class="name">Writer</div>
+        <div class="status" id="status-writer">空闲</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="chat-area" id="chatArea">
+    <div class="msg msg-agent" style="opacity: 0.6;">
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: var(--accent);">✨</span>
+        <span class="agent-name" style="color: var(--accent);">Mavis</span>
+        <span>· 等待演示</span>
+      </div>
+      <div class="agent-body">
+        <div class="text-stream">选择上方场景：<br>• 基础 3 个：Researcher / Coder / Chain — 顺序流式，简洁<br>• <b style="color: var(--sup-color);">Supervisor</b> — 独立演示，展示多 agent 编排 + 交接动画</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="event-log">
+    <div class="log-header">
+      <span>Event Log</span>
+      <span class="count" id="logCount">0</span>
+    </div>
+    <div class="log-list" id="logList"></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<div class="input-bar">
+  <span class="input-hint">💡 Demo 模式 · Supervisor 模式展示 4 阶段编排：Quick → Parallel → Pipeline → Recovery</span>
+</div>
+
+<script>
+// === 状态 ===
+const state = {
+  scenario: null,
+  running: false,
+  currentAgent: null,
+  agentEl: null,
+  textEl: null,
+  cursorEl: null,
+  fullText: '',
+  logCount: 0
+};
+
+const agents = {
+  researcher: { name: 'Researcher', icon: '🔍', color: 'var(--researcher)' },
+  coder:      { name: 'Coder',      icon: '💻', color: 'var(--coder)' },
+  analyst:    { name: 'Analyst',    icon: '📊', color: 'var(--analyst)' },
+  writer:     { name: 'Writer',     icon: '✍️', color: 'var(--writer)' }
+};
+
+// === 工具 ===
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const ts = () => new Date().toTimeString().slice(0, 8);
+
+function scrollBottom() {
+  const ca = $('chatArea');
+  ca.scrollTop = ca.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// === Event Log ===
+function logEvent(type, content) {
+  state.logCount++;
+  $('logCount').textContent = state.logCount;
+  const item = document.createElement('div');
+  item.className = 'log-item';
+  const typeLabel = ({1:'start', 6:'chunk', 7:'tool', 8:'result', 9:'summary', 11:'error', 12:'handoff', 13:'decision'})[type] || `t${type}`;
+  item.innerHTML = `
+    <span class="log-time">${ts()}</span>
+    <span class="log-type t${type}">${typeLabel}</span>
+    <span class="log-content">${escapeHtml(content)}</span>`;
+  $('logList').appendChild(item);
+  $('logList').scrollTop = $('logList').scrollHeight;
+}
+
+// === Toast ===
+function showToast(icon, text) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span class="icon">${icon}</span><span>${escapeHtml(text)}</span>`;
+  $('toastContainer').appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+// === Topology 管理（仅 Supervisor 模式使用） ===
+function setNodeState(nodeId, stateName, statusText) {
+  const node = $(nodeId);
+  if (!node) return;
+  node.classList.remove('idle', 'thinking', 'working', 'done', 'failed', 'delegating', 'aggregating');
+  node.classList.add(stateName);
+  const statusEl = node.querySelector('.status');
+  if (statusEl && statusText) statusEl.textContent = statusText;
+}
+
+function pulseSup() {
+  const ring = $('pulseSup');
+  ring.classList.remove('active');
+  void ring.offsetWidth;
+  ring.classList.add('active');
+}
+
+function drawLines() {
+  const svg = $('topologySvg');
+  const bar = $('topologyBar');
+  if (!bar.classList.contains('show')) return;
+  const w = bar.clientWidth, h = bar.clientHeight;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.innerHTML = '';
+  const sup = $('node-sup').getBoundingClientRect();
+  const sCx = sup.left + sup.width/2 - bar.getBoundingClientRect().left;
+  const sCy = sup.top + sup.height/2 - bar.getBoundingClientRect().top;
+  ['researcher', 'coder', 'analyst', 'writer'].forEach(key => {
+    const w = $('node-' + key).getBoundingClientRect();
+    const wCx = w.left + w.width/2 - bar.getBoundingClientRect().left;
+    const wCy = w.top + w.height/2 - bar.getBoundingClientRect().top;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', sCx); line.setAttribute('y1', sCy);
+    line.setAttribute('x2', wCx); line.setAttribute('y2', wCy);
+    line.dataset.from = 'sup'; line.dataset.to = key;
+    svg.appendChild(line);
+  });
+}
+
+function setLineState(toKey, state) {
+  const line = $(`line[data-from="sup"][data-to="${toKey}"]`) || document.querySelector(`#topologySvg line[data-to="${toKey}"]`);
+  // querySelector fallback
+  const lines = document.querySelectorAll('#topologySvg line');
+  for (const l of lines) {
+    if (l.dataset.to === toKey) {
+      l.classList.remove('flow', 'flow-result', 'peer');
+      if (state) l.classList.add(state);
+    }
+  }
+}
+function setAllLinesState(state) {
+  document.querySelectorAll('#topologySvg line').forEach(l => {
+    l.classList.remove('flow', 'flow-result', 'peer');
+    if (state) l.classList.add(state);
+  });
+}
+
+window.addEventListener('resize', () => {
+  if ($('topologyBar').classList.contains('show')) drawLines();
+});
+
+// === 消息构造 ===
+function addUserMsg(text) {
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-user';
+  msg.innerHTML = `<div class="bubble-user">${escapeHtml(text)}</div>`;
+  $('chatArea').appendChild(msg);
+  scrollBottom();
+}
+
+function addSupervisorMsg(thinking, content) {
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-agent msg-supervisor';
+  msg.innerHTML = `
+    <div class="agent-header">
+      <span class="agent-avatar sup">🎯</span>
+      <span class="agent-name" style="color: var(--sup-color);">Supervisor</span>
+      <span class="agent-tag">决策中</span>
+    </div>
+    <div class="agent-body"></div>`;
+  $('chatArea').appendChild(msg);
+  state.agentEl = msg.querySelector('.agent-body');
+  if (thinking) {
+    const t = addThinking(thinking);
+    t.classList.remove('open');
+  }
+  scrollBottom();
+  return state.agentEl;
+}
+
+function startAgent(agentKey, opts = {}) {
+  const a = agents[agentKey];
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-agent';
+  if (opts.handoffFrom) {
+    const fromName = opts.handoffFrom === 'sup' ? 'Supervisor' : agents[opts.handoffFrom].name;
+    msg.innerHTML = `
+      <div class="handoff-badge">🔗 <span>从 ${fromName} 交接</span> <span class="arrow">→</span></div>
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: ${a.color};">${a.icon}</span>
+        <span class="agent-name" style="color: ${a.color};">${a.name}</span>
+        <span>· 接收任务</span>
+      </div>
+      <div class="agent-body"></div>`;
+  } else {
+    msg.innerHTML = `
+      <div class="agent-header">
+        <span class="agent-avatar" style="--agent-color: ${a.color};">${a.icon}</span>
+        <span class="agent-name" style="color: ${a.color};">${a.name}</span>
+        <span>· 工作中</span>
+      </div>
+      <div class="agent-body"></div>`;
+  }
+  $('chatArea').appendChild(msg);
+  state.currentAgent = agentKey;
+  state.agentEl = msg.querySelector('.agent-body');
+  scrollBottom();
+  return state.agentEl;
+}
+
+function addThinking(content, isFinal = false) {
+  const wrap = document.createElement('div');
+  wrap.className = 'thinking open';
+  wrap.innerHTML = `
+    <div class="thinking-head">
+      <span class="thinking-arrow">▶</span>
+      <span class="thinking-text">${isFinal ? escapeHtml(content) : '<span class="thinking-dots"></span>'}</span>
+    </div>
+    <div class="thinking-body">${escapeHtml(content)}</div>`;
+  wrap.querySelector('.thinking-head').addEventListener('click', () => wrap.classList.toggle('open'));
+  state.agentEl.appendChild(wrap);
+  scrollBottom();
+  return wrap;
+}
+
+function appendToolCall(name, args) {
+  const el = document.createElement('div');
+  el.className = 'tool-call';
+  el.innerHTML = `
+    <div><span class="label">🔧 TOOL</span><span class="name">${escapeHtml(name)}</span></div>
+    <div class="args">${escapeHtml(JSON.stringify(args, null, 2))}</div>`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendToolResult(text) {
+  const el = document.createElement('div');
+  el.className = 'tool-result';
+  el.innerHTML = `✅ ${escapeHtml(text)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function startTextStream() {
+  const el = document.createElement('div');
+  el.className = 'text-stream';
+  state.cursorEl = document.createElement('span');
+  state.cursorEl.className = 'cursor';
+  el.appendChild(state.cursorEl);
+  state.textEl = el;
+  state.fullText = '';
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendTextChunk(chunk) {
+  state.fullText += chunk;
+  state.textEl.innerHTML = renderText(state.fullText);
+  state.textEl.appendChild(state.cursorEl);
+  scrollBottom();
+}
+
+function renderText(t) {
+  const parts = t.split(/(```[\s\S]*?```)/g);
+  return parts.map(p => {
+    if (p.startsWith('```')) {
+      const code = p.replace(/^```\w*\n?/, '').replace(/```$/, '');
+      return `<pre class="code-block">${escapeHtml(code)}</pre>`;
+    }
+    return escapeHtml(p);
+  }).join('');
+}
+
+function endTextStream() {
+  if (state.cursorEl) state.cursorEl.remove();
+  state.textEl = null; state.cursorEl = null;
+}
+
+function appendSummary(text) {
+  const el = document.createElement('div');
+  el.className = 'summary';
+  el.innerHTML = `<span class="label">📌 摘要</span>${escapeHtml(text)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function appendError(msg) {
+  const el = document.createElement('div');
+  el.className = 'error-block';
+  el.innerHTML = `<span class="label">❌ ERROR</span>${escapeHtml(msg)}`;
+  state.agentEl.appendChild(el);
+  scrollBottom();
+}
+
+function finishAgent() {
+  const status = state.agentEl.parentElement.querySelector('.agent-header span:last-child');
+  if (status) status.textContent = '· 完成';
+}
+
+// === 基础场景：3 个不带 Supervisor 的简单流 ===
+const basicScenarios = {
+  researcher: {
+    user: '什么是异方差性？给出定义和直觉解释',
+    run: runResearcher
+  },
+  coder: {
+    user: '用 Python 写一个快排，要求带注释',
+    run: runCoder
+  },
+  chain: {
+    user: '分析 A 游戏 2026-05-26 的异常登录可能原因',
+    run: runChain
+  }
+};
+
+async function runResearcher() {
+  const t = addThinking('用户问的是统计概念，先给定义再类比解释...');
+  await sleep(800);
+  t.querySelector('.thinking-text').textContent = '用户问的是统计概念，先给定义再类比解释...';
+  t.querySelector('.thinking-body').textContent = '用户问的是统计概念，先给定义再类比解释...';
+
+  await sleep(400);
+  appendToolCall('wiki_search', { query: '异方差性 heteroscedasticity' });
+  logEvent(7, 'wiki_search');
+  await sleep(700);
+  appendToolResult('3 条相关条目：异方差性定义、White 检验、WLS 修正');
+  logEvent(8, 'wiki ✓');
+
+  await sleep(300);
+  startTextStream();
+  logEvent(6, 'streaming...');
+  for (const p of [
+    '**异方差性** = 回归中误差项的方差不恒定。\n\n',
+    '## 直觉\n',
+    '量小孩 ±0.5cm 是大误差，量大人 ±0.5cm 可忽略——这就是方差随 X 变化。\n\n',
+    '## 定义\n',
+    '在线性回归 `Y = Xβ + ε` 中，若 `Var(εᵢ|Xᵢ) = σᵢ²` 且 `σᵢ² 不全相等`，则存在异方差性。\n\n',
+    '## 影响\n',
+    'OLS 仍无偏但**不再有效**（标准误被低估），t 检验失真。'
+  ]) {
+    await sleep(300);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('异方差 = 误差方差随 X 变；OLS 无偏但失效；White/BP 检验，WLS 修正。');
+  finishAgent();
+}
+
+async function runCoder() {
+  const t = addThinking('用户要 Python 快排，给 Lomuto 分区版本加注释...');
+  await sleep(700);
+  t.querySelector('.thinking-text').textContent = '用户要 Python 快排，给 Lomuto 分区版本加注释...';
+
+  startTextStream();
+  logEvent(6, 'streaming...');
+  for (const p of [
+    '经典 **Lomuto 分区** 快排：\n\n',
+    '```python\n',
+    'def quicksort(arr, lo=0, hi=None):\n',
+    '    if hi is None:\n',
+    '        hi = len(arr) - 1\n',
+    '    if lo < hi:\n',
+    '        p = partition(arr, lo, hi)\n',
+    '        quicksort(arr, lo, p - 1)\n',
+    '        quicksort(arr, p + 1, hi)\n',
+    '\n',
+    'def partition(arr, lo, hi):\n',
+    '    pivot = arr[hi]\n',
+    '    i = lo - 1\n',
+    '    for j in range(lo, hi):\n',
+    '        if arr[j] <= pivot:\n',
+    '            i += 1\n',
+    '            arr[i], arr[j] = arr[j], arr[i]\n',
+    '    arr[i + 1], arr[hi] = arr[hi], arr[i + 1]\n',
+    '    return i + 1\n',
+    '```\n\n',
+    '- 平均 `O(n log n)`，最坏 `O(n²)`（已排序+末位 pivot）\n',
+    '- 优化：三数取中 或 随机 pivot'
+  ]) {
+    await sleep(200);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('给出 Lomuto 快排 + 注释；含复杂度分析与最坏情况优化。');
+  finishAgent();
+}
+
+async function runChain() {
+  startAgent('researcher');
+  logEvent(1, 'researcher');
+  const t1 = addThinking('需先了解该游戏近期登录数据和攻击模式...');
+  await sleep(800);
+  t1.querySelector('.thinking-text').textContent = '需先了解该游戏近期登录数据和攻击模式...';
+
+  await sleep(400);
+  appendToolCall('clickhouse.query', { sql: 'SELECT login_ip, count() c FROM login_events WHERE game_id=? AND ts>now()-1d GROUP BY login_ip HAVING c>100', params: { game_id: 'A' } });
+  logEvent(7, 'clickhouse');
+  await sleep(800);
+  appendToolResult('17 个 IP 24h 登录 >100 次，TOP1=203.0.113.45 跨 12 账号');
+  logEvent(8, 'clickhouse ✓');
+
+  startTextStream();
+  for (const p of [
+    '**判断：撞库/批量登录**\n\n',
+    '- 17 IP 24h >100 次\n',
+    '- TOP1 跨 12 账号\n',
+    '- 凌晨 2-5 点集中\n'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('17 高频 IP，TOP1 跨 12 账号，凌晨集中 → 撞库。');
+  finishAgent();
+  await sleep(500);
+
+  startAgent('coder');
+  logEvent(1, 'coder');
+  const t2 = addThinking('给 Flink + 滑动窗口实时拦截规则...');
+  await sleep(700);
+  t2.querySelector('.thinking-text').textContent = '给 Flink + 滑动窗口实时拦截规则...';
+
+  startTextStream();
+  for (const p of [
+    '实时拦截规则（Flink SQL）：\n\n',
+    '```sql\n',
+    'SELECT ip, count(DISTINCT user_id) u\n',
+    'FROM login_stream\n',
+    'WHERE game_id = \'A\'\n',
+    'GROUP BY ip, TUMBLE(ts, INTERVAL \'1\' MINUTE)\n',
+    'HAVING u > 5\n',
+    '```\n\n',
+    '配合 Redis 黑名单 + 验证码。'
+  ]) {
+    await sleep(200);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('Flink SQL：单 IP/1min/跨 5 账号触发；黑名单+验证码处置。');
+  finishAgent();
+  await sleep(500);
+
+  startAgent('analyst');
+  logEvent(1, 'analyst');
+  const t3 = addThinking('评估上线后误杀率与覆盖度...');
+  await sleep(700);
+  t3.querySelector('.thinking-text').textContent = '评估上线后误杀率与覆盖度...';
+
+  startTextStream();
+  for (const p of [
+    '**风控影响评估**\n\n',
+    '| 指标 | 预期 |\n',
+    '|------|------|\n',
+    '| 误杀率 | ~0.3% |\n',
+    '| 拦截延迟 | <2s |\n',
+    '| 攻击覆盖 | ~80% |\n\n',
+    '建议：10% 灰度 24h 再全量。'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  logEvent(9, 'summary');
+  appendSummary('误杀 0.3% / 覆盖 80%；建议 10% 灰度 24h 后全量。');
+  finishAgent();
+}
+
+// === Supervisor 场景：4 阶段独立演示 ===
+async function runSupervisor() {
+  const userQ = 'A 游戏 24h 内检测到异常登录峰值，定位原因并给出处置建议';
+  addUserMsg(userQ);
+  logEvent(1, 'supervisor: 用户提问');
+  await sleep(500);
+
+  // === Phase 1: Quick Delegate ===
+  addSupervisorMsg('分析用户问题：登录异常 → 需要调查数据。决定派给 Researcher 单兵处理（任务较简单）。');
+  await sleep(700);
+  logEvent(13, 'plan: sup → researcher (quick)');
+  setNodeState('node-sup', 'delegating', '派发中');
+  pulseSup();
+  await sleep(300);
+  setLineState('researcher', 'flow');
+  showToast('🎯', 'Supervisor 派发给 Researcher');
+  await sleep(600);
+
+  startAgent('researcher', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → researcher');
+  logEvent(1, 'researcher');
+  setNodeState('node-sup', 'idle', '等待结果');
+  setNodeState('node-researcher', 'working', '查询中');
+  await sleep(300);
+  setLineState('researcher', null);
+
+  const t1 = addThinking('查 24h 内登录异常 IP...');
+  await sleep(600);
+  t1.querySelector('.thinking-text').textContent = '查 24h 内登录异常 IP...';
+  appendToolCall('clickhouse.query', { sql: 'SELECT ip, count(DISTINCT user_id) c FROM login_events WHERE game_id=? AND ts>now()-1d GROUP BY ip HAVING c>10 ORDER BY c DESC LIMIT 20' });
+  logEvent(7, 'clickhouse');
+  await sleep(700);
+  appendToolResult('TOP1: 203.0.113.45 跨 12 账号 / 1872 次（凌晨 2-5 点）');
+  logEvent(8, 'clickhouse ✓');
+
+  startTextStream();
+  for (const p of [
+    '**Phase 1 结果**\n\n',
+    '初步判定：**撞库攻击**。\n',
+    '关键证据：单 IP 跨 12 账号 / 1872 次 / 凌晨集中。\n'
+  ]) {
+    await sleep(220);
+    appendTextChunk(p);
+  }
+  endTextStream();
+  appendSummary('撞库攻击，单 IP 跨 12 账号凌晨集中。');
+  setNodeState('node-researcher', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 1 summary');
+  await sleep(400);
+
+  // Supervisor 聚合 Phase 1
+  setLineState('researcher', 'flow-result');
+  setNodeState('node-sup', 'aggregating', '汇总中');
+  showToast('🎯', 'Supervisor 收到结果');
+  await sleep(800);
+  setLineState('researcher', null);
+  setNodeState('node-sup', 'idle', '规划下一阶段');
+  logEvent(13, 'phase 1 done → plan phase 2');
+
+  // === Phase 2: Parallel (researcher + analyst) ===
+  addSupervisorMsg('收到初步结论。需要并行：① Researcher 深入样本分析 ② Analyst 评估业务影响。两个独立任务，并行执行。');
+  await sleep(700);
+  setNodeState('node-sup', 'delegating', '派发中');
+  pulseSup();
+  await sleep(300);
+  setLineState('researcher', 'flow');
+  setLineState('analyst', 'flow');
+  showToast('🎯', 'Supervisor 并行派发 Researcher + Analyst');
+  await sleep(600);
+  setNodeState('node-sup', 'idle', '等待');
+
+  // Researcher 第二轮
+  startAgent('researcher', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → researcher (parallel)');
+  logEvent(1, 'researcher');
+  setNodeState('node-researcher', 'working', '分析样本');
+  setLineState('researcher', null);
+  const t2a = addThinking('提取 TOP1 IP 的所有登录请求，识别 UA 分布...');
+  await sleep(500);
+  t2a.querySelector('.thinking-text').textContent = '提取 TOP1 IP 的所有登录请求，识别 UA 分布...';
+  startTextStream();
+  for (const p of [
+    '**样本特征**：\n',
+    '- UA: `python-requests/2.28.0` 占 94%（非浏览器）\n',
+    '- 登录间隔：固定 3.2s（脚本化特征）\n',
+    '- 命中账号：12 个，全是历史泄露库\n'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('UA 94% 是 python-requests，3.2s 固定间隔 → 自动化脚本撞库。');
+  setNodeState('node-researcher', 'done', '完成');
+  finishAgent();
+  await sleep(300);
+
+  // Analyst 并行
+  startAgent('analyst', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → analyst (parallel)');
+  logEvent(1, 'analyst');
+  setNodeState('node-analyst', 'working', '评估影响');
+  setLineState('analyst', null);
+  const t2b = addThinking('评估 12 个被撞账号的资产价值和潜在损失...');
+  await sleep(500);
+  t2b.querySelector('.thinking-text').textContent = '评估 12 个被撞账号的资产价值和潜在损失...';
+  startTextStream();
+  for (const p of [
+    '**业务影响**：\n',
+    '- 12 账号中：3 个付费用户，2 个高价值\n',
+    '- 已发生异常登录成功率：34%\n',
+    '- 潜在损失：估算 ¥80k 充值资产\n'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('3 付费+2 高价值用户被撞，成功率 34%，潜在损失 ~¥80k。');
+  setNodeState('node-analyst', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 2 parallel done');
+  await sleep(400);
+
+  setLineState('researcher', 'flow-result');
+  setLineState('analyst', 'flow-result');
+  setNodeState('node-sup', 'aggregating', '汇总中');
+  showToast('🎯', 'Supervisor 汇总两路结果');
+  await sleep(800);
+  setLineState('researcher', null);
+  setLineState('analyst', null);
+  setNodeState('node-sup', 'idle', '规划下一阶段');
+  logEvent(13, 'phase 2 done → plan phase 3');
+
+  // === Phase 3: Pipeline (coder → analyst) ===
+  addSupervisorMsg('确认是脚本撞库。需要 Coder 出实时拦截规则，再交给 Analyst 评估上线风险。流水线模式：coder → analyst 串行交接。');
+  await sleep(700);
+  setNodeState('node-sup', 'delegating', '派发 Coder');
+  pulseSup();
+  await sleep(300);
+  setLineState('coder', 'flow');
+  showToast('🎯', 'Supervisor 派发给 Coder');
+  await sleep(600);
+  setNodeState('node-sup', 'idle', '等待');
+  setLineState('coder', null);
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder');
+  logEvent(1, 'coder');
+  setNodeState('node-coder', 'working', '编写规则');
+  const t3a = addThinking('写 Flink SQL 拦截规则 + 滑窗 + 阈值...');
+  await sleep(500);
+  t3a.querySelector('.thinking-text').textContent = '写 Flink SQL 拦截规则 + 滑窗 + 阈值...';
+
+  startTextStream();
+  for (const p of [
+    '```sql\n',
+    '-- 单 IP 1min 内跨账号数 > 3 触发拦截\n',
+    'SELECT ip, count(DISTINCT user_id) u\n',
+    'FROM login_stream\n',
+    'WHERE game_id = \'A\'\n',
+    'GROUP BY ip, TUMBLE(ts, INTERVAL \'1\' MINUTE)\n',
+    'HAVING u > 3\n',
+    '```\n\n',
+    '配套：UA 含 `python-requests` 直接 403。'
+  ]) { await sleep(200); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('Flink SQL: 1min/跨 3 账号 + UA 黑名单双触发。');
+  setNodeState('node-coder', 'done', '完成');
+  finishAgent();
+  logEvent(12, 'coder → analyst (peer handoff)');
+  await sleep(400);
+
+  // peer handoff: coder → analyst
+  setNodeState('node-analyst', 'working', '风险评估');
+  showToast('💻→📊', 'Coder 交接给 Analyst');
+  await sleep(400);
+  startAgent('analyst', { handoffFrom: 'coder' });
+  logEvent(1, 'analyst');
+  const t3b = addThinking('评估规则的误杀率和上线影响...');
+  await sleep(500);
+  t3b.querySelector('.thinking-text').textContent = '评估规则的误杀率和上线影响...';
+  startTextStream();
+  for (const p of [
+    '**上线风险评估**：\n\n',
+    '| 指标 | 预期 |\n',
+    '|------|------|\n',
+    '| 误杀率 | ~0.4% |\n',
+    '| 拦截延迟 | <2s |\n',
+    '| 攻击覆盖 | ~92% |\n\n',
+    '建议：10% 灰度 6h 后全量。'
+  ]) { await sleep(220); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('误杀 0.4% / 覆盖 92%；10% 灰度 6h 后全量。');
+  setNodeState('node-analyst', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 3 pipeline done');
+  await sleep(400);
+
+  setLineState('analyst', 'flow-result');
+  setNodeState('node-sup', 'aggregating', '汇总中');
+  showToast('🎯', 'Supervisor 收到最终方案');
+  await sleep(800);
+  setLineState('analyst', null);
+  setNodeState('node-sup', 'idle', '生成最终报告');
+  logEvent(13, 'phase 3 done → plan phase 4');
+
+  // === Phase 4: Recovery ===
+  addSupervisorMsg('方案需附 1 小时内紧急上线 SOP。派 Coder 输出回滚脚本。');
+  await sleep(700);
+  setNodeState('node-sup', 'delegating', '派发 Coder');
+  pulseSup();
+  await sleep(300);
+  setLineState('coder', 'flow');
+  showToast('🎯', 'Supervisor 派发 Coder');
+  await sleep(500);
+  setLineState('coder', null);
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder');
+  logEvent(1, 'coder');
+  setNodeState('node-coder', 'working', '尝试中');
+  const t4a = addThinking('调用工具生成 K8s 回滚脚本...');
+  await sleep(500);
+  t4a.querySelector('.thinking-text').textContent = '调用工具生成 K8s 回滚脚本...';
+  appendToolCall('kubectl.get_deployments', { namespace: 'risk-control' });
+  logEvent(7, 'kubectl');
+  await sleep(800);
+  appendError('kubectl API timeout (5s) — 集群响应慢');
+  logEvent(11, 'kubectl timeout');
+  setNodeState('node-coder', 'failed', '失败');
+  finishAgent();
+  await sleep(500);
+
+  setLineState('coder', 'flow-result');
+  setNodeState('node-sup', 'aggregating', '重试决策');
+  showToast('⚠️', 'Supervisor 检测到失败，准备重试');
+  await sleep(600);
+  setLineState('coder', null);
+  addSupervisorMsg('Coder 调用 kubectl 超时。改用直接查询 etcd 备份作为降级方案，重试。');
+  logEvent(13, 'recover: switch to etcd fallback');
+  await sleep(500);
+
+  setNodeState('node-sup', 'delegating', '重试派发');
+  pulseSup();
+  await sleep(300);
+  setLineState('coder', 'flow');
+  showToast('🎯', 'Supervisor 重试 → Coder');
+  await sleep(500);
+  setLineState('coder', null);
+
+  startAgent('coder', { handoffFrom: 'sup' });
+  logEvent(12, 'sup → coder (retry)');
+  logEvent(1, 'coder');
+  setNodeState('node-coder', 'working', '降级方案');
+  const t4b = addThinking('改用本地 etcd 备份，避免 kubectl 依赖...');
+  await sleep(500);
+  t4b.querySelector('.thinking-text').textContent = '改用本地 etcd 备份，避免 kubectl 依赖...';
+  appendToolCall('etcd.snapshot', { endpoint: 'localhost:2379' });
+  logEvent(7, 'etcd');
+  await sleep(600);
+  appendToolResult('etcd snapshot 成功 /var/backup/etcd-20260526.bak');
+  logEvent(8, 'etcd ✓');
+
+  startTextStream();
+  for (const p of [
+    '降级方案：使用本地 etcd 快照作为回滚源。\n\n',
+    '```bash\n',
+    '# 1. 停止 risk-control deployment\n',
+    'kubectl scale deploy risk-control --replicas=0\n',
+    '\n',
+    '# 2. 从 etcd snapshot 恢复配置\n',
+    'etcdctl snapshot restore /var/backup/etcd-20260526.bak \\\n',
+    '  --data-dir=/var/lib/etcd-restore\n',
+    '\n',
+    '# 3. 重启并验证\n',
+    'kubectl scale deploy risk-control --replicas=3\n',
+    '```\n'
+  ]) { await sleep(200); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('降级方案：etcd snapshot 回滚，3 步脚本，<5min 完成。');
+  setNodeState('node-coder', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'phase 4 recovery done');
+  await sleep(400);
+
+  setLineState('coder', 'flow-result');
+  setNodeState('node-sup', 'aggregating', '生成最终方案');
+  showToast('🎯', 'Supervisor 生成最终方案');
+  await sleep(800);
+  setLineState('coder', null);
+
+  // === Final summary by Supervisor ===
+  addSupervisorMsg('');
+  startTextStream();
+  for (const p of [
+    '## 完整处置方案\n\n',
+    '**根因**：203.0.113.45 IP 使用 python-requests 脚本，3.2s 固定间隔，撞 12 个历史泄露账号。\n\n',
+    '**紧急（1h 内）**：\n',
+    '1. 封禁 203.0.113.45 /24 段\n',
+    '2. 12 个被撞账号强制重置密码\n',
+    '3. 部署 Flink 拦截规则（阈值：1min/跨 3 账号 + UA 黑名单）\n\n',
+    '**中期（24h）**：\n',
+    '4. 灰度上线 Analyst 评估方案（10% → 100%）\n',
+    '5. 准备 etcd 快照回滚 SOP（已交付）\n\n',
+    '**长期**：\n',
+    '6. 接入外部泄露库实时比对，主动通知用户改密\n'
+  ]) { await sleep(280); appendTextChunk(p); }
+  endTextStream();
+  appendSummary('根因=脚本撞库；紧急3项/中期2项/长期1项。');
+  setNodeState('node-sup', 'done', '完成');
+  finishAgent();
+  logEvent(9, 'final summary');
+}
+
+// === 启动器 ===
+async function runScenario(key) {
+  if (state.running) return;
+  state.running = true;
+  state.scenario = key;
+  state.logCount = 0;
+  $('logList').innerHTML = '';
+  $('logCount').textContent = '0';
+  $('chatArea').innerHTML = '';
+  $('toastContainer').innerHTML = '';
+
+  document.querySelectorAll('.scenario-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scenario === key);
+    b.disabled = true;
+  });
+
+  const isSupervisor = (key === 'supervisor');
+  const bar = $('topologyBar');
+  bar.classList.toggle('show', isSupervisor);
+  if (isSupervisor) {
+    // 重置所有节点
+    ['researcher', 'coder', 'analyst', 'writer'].forEach(k =>
+      setNodeState('node-' + k, 'idle', '空闲'));
+    setNodeState('node-sup', 'idle', '空闲');
+    setAllLinesState(null);
+    await sleep(50);
+    drawLines();
+  }
+
+  if (key === 'supervisor') {
+    try {
+      await runSupervisor();
+    } catch (e) {
+      appendError(String(e));
+      logEvent(11, String(e));
+    }
+  } else {
+    addUserMsg(basicScenarios[key].user);
+    logEvent(1, `scenario=${key}`);
+    await sleep(400);
+    if (key === 'researcher') startAgent('researcher');
+    else if (key === 'coder') startAgent('coder');
+    else if (key === 'chain') { /* runChain handles its own startAgent */ }
+    try {
+      await basicScenarios[key].run();
+    } catch (e) {
+      appendError(String(e));
+      logEvent(11, String(e));
+    }
+  }
+
+  document.querySelectorAll('.scenario-btn').forEach(b => b.disabled = false);
+  state.running = false;
+}
+
+document.querySelectorAll('.scenario-btn').forEach(btn => {
+  btn.addEventListener('click', () => runScenario(btn.dataset.scenario));
+});
+</script>
+
+</body>
+</html>

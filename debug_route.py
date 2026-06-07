@@ -1,7 +1,9 @@
 """Debug script to check routing behavior."""
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+
 from langchain_core.messages import AIMessageChunk
+
 
 def _make_chunk(content=None, reasoning=None):
     chunk = MagicMock(spec=AIMessageChunk)
@@ -29,7 +31,6 @@ with patch("src.agent.models.resolve_model") as mock_resolve:
 
         from src.agent.config import AgentConfig
         from src.agent.orchestrator import Orchestrator
-        from src.agent.orchestrator.planner import GraphState, Plan
 
         config = AgentConfig()
         orch = Orchestrator(config)

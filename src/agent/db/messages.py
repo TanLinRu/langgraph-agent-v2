@@ -23,9 +23,34 @@ import json
 
 from langchain_core.messages import BaseMessage
 
+from collections.abc import Sequence
+
 from src.agent.db.connection import _get_conn
 from src.agent.db.sessions import session_exists
 from src.agent.message import Message
+
+
+def load_recent_context(session_id: str, rounds: int = 2) -> str:
+    """Load the last N rounds of human+ai messages as a text context string."""
+    conn = _get_conn()
+    rows: Sequence[tuple[str, str, str | None]] = conn.execute(
+        "SELECT role, content, name FROM messages "
+        "WHERE session_id = ? AND compacted = 0 AND role IN ('human', 'ai') "
+        "ORDER BY id DESC LIMIT ?",
+        (session_id, rounds * 2),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return ""
+    lines: list[str] = []
+    for row in reversed(rows):
+        role, content, name = row[0], row[1] or "", row[2] or ""
+        if role == "human":
+            lines.append(f"User: {content}")
+        else:
+            prefix = f"{name}: " if name else "Assistant: "
+            lines.append(f"{prefix}{content}")
+    return "\n".join(lines)
 
 
 def load_messages(session_id: str) -> list[Message]:
@@ -74,6 +99,7 @@ def save_message(
     thinking: str = "",
     tool_calls: str = "",
     name: str = "",
+    task_id: str = "",
 ) -> None:
     """保存单条消息 (非 turn 对)。用于编排过程中间消息。
 
@@ -91,9 +117,9 @@ def save_message(
             pass
     role_p, content_p, tc_p, thinking_p, name_p = msg.to_db_params()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_calls, thinking, name) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (session_id, role_p, content_p, tc_p, thinking_p, name_p),
+        "INSERT INTO messages (session_id, role, content, tool_calls, thinking, name, task_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (session_id, role_p, content_p, tc_p, thinking_p, name_p, task_id),
     )
     if role == "human":
         row = conn.execute(
@@ -121,6 +147,7 @@ def save_turn(
     thinking: str = "",
     tool_calls: str = "",
     name: str = "",
+    task_id: str = "",
 ) -> None:
     """保存一轮对话 (human + ai),自动处理标题生成。
 
@@ -131,13 +158,13 @@ def save_turn(
     if not session_exists(session_id):
         conn.execute("INSERT INTO sessions (session_id) VALUES (?)", (session_id,))
     conn.execute(
-        "INSERT INTO messages (session_id, role, content) VALUES (?, 'human', ?)",
-        (session_id, user_message),
+        "INSERT INTO messages (session_id, role, content, task_id) VALUES (?, 'human', ?, ?)",
+        (session_id, user_message, task_id),
     )
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, thinking, tool_calls, name) "
-        "VALUES (?, 'ai', ?, ?, ?, ?)",
-        (session_id, assistant_content, thinking, tool_calls, name),
+        "INSERT INTO messages (session_id, role, content, thinking, tool_calls, name, task_id) "
+        "VALUES (?, 'ai', ?, ?, ?, ?, ?)",
+        (session_id, assistant_content, thinking, tool_calls, name, task_id),
     )
     row = conn.execute(
         "SELECT title FROM sessions WHERE session_id = ?", (session_id,)

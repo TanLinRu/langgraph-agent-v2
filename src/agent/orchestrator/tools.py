@@ -22,6 +22,27 @@ from src.agent.tools import get_tools
 logger = logging.getLogger(__name__)
 
 
+def _is_output_unreadable(text: str) -> bool:
+    """Check if agent output is too garbled or empty to be useful downstream."""
+    if not text or len(text.strip()) < 20:
+        return True
+    broken_count = 0
+    total_lines = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        total_lines += 1
+        if stripped.startswith("//") and not stripped.startswith("// ") and "//\n" not in stripped:
+            if any(c.isalpha() for c in stripped[2:]):
+                broken_count += 1
+        if any(ord(c) > 127 and not c.isalpha() and c not in "\n\r\t" for c in stripped):
+            broken_count += 1
+    if total_lines > 0 and broken_count / total_lines > 0.3:
+        return True
+    return False
+
+
 _TRUNCATION_SUFFIXES = ("。", ".", "!", "?", "```", "\n\n", ")", "】", "」", "》")
 
 
@@ -65,8 +86,8 @@ class SubAgentTool(BaseTool):
             system_prompt += f"\n\n[Context]\n{self.context}"
         logger.info("[SubAgent] %s request — model=%s tools=%s sp=%d task=%d",
                      self.agent_id, model_name, tool_names, len(system_prompt), len(task))
-        logger.info("[SubAgent] %s system_prompt: %.1000s", self.agent_id, system_prompt)
-        logger.info("[SubAgent] %s task: %.1000s", self.agent_id, task)
+        logger.info("[SubAgent] %s system_prompt:\n%s", self.agent_id, system_prompt)
+        logger.info("[SubAgent] %s task:\n%s", self.agent_id, task)
 
         agent_model = _models.resolve_model(
             self.config,
@@ -125,14 +146,12 @@ class SubAgentTool(BaseTool):
             else:
                 break
 
-        logger.info("[SubAgent] %s response: %.1000s", self.agent_id, result)
+        logger.info("[SubAgent] %s response (%d chars):\n%s", self.agent_id, len(result), result)
         return result
 
     def _resolve_tools(self, cfg: dict) -> list:
         tool_map = {getattr(t, "__name__", str(t)): t for t in get_tools()}
         tool_names = cfg.get("tools", [])
-        if not tool_names and self.agent_id == "direct":
-            return list(tool_map.values())
         return [tool_map[n] for n in tool_names if n in tool_map]
 
 
@@ -157,7 +176,7 @@ class ACPSubAgentTool(BaseTool):
         from src.agent.acp_agent import get_acp_agent
 
         logger.info("[ACPSubAgent] %s request — task=%d chars", self.acp_cli_id, len(task))
-        logger.info("[ACPSubAgent] %s task: %.1000s", self.acp_cli_id, task)
+        logger.info("[ACPSubAgent] %s task:\n%s", self.acp_cli_id, task)
 
         acp = get_acp_agent(self.acp_cli_id)
         content_parts: list[str] = []
@@ -173,5 +192,14 @@ class ACPSubAgentTool(BaseTool):
         result = "".join(content_parts)
         logger.info("[ACPSubAgent] %s response — %d chars in %dms",
                      self.acp_cli_id, len(result), elapsed)
-        logger.info("[ACPSubAgent] %s response: %.1000s", self.acp_cli_id, result)
+
+        if _is_output_unreadable(result):
+            logger.error("[ACPSubAgent] %s output is unreadable (garbled/empty), raising error",
+                         self.acp_cli_id)
+            raise ValueError(
+                f"ACP agent '{self.acp_cli_id}' returned unreadable output. "
+                "The agent may have encountered a tool error or communication issue."
+            )
+
+        logger.info("[ACPSubAgent] %s response (%d chars):\n%s", self.acp_cli_id, len(result), result)
         return result

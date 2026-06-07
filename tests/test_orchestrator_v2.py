@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessageChunk
 
+from src.agent.config import AgentConfig
 from src.agent.orchestrator.planner import (
     AgentResult,
     AntiPattern,
@@ -15,8 +16,6 @@ from src.agent.orchestrator.planner import (
     load_constraints,
     save_anti_pattern,
 )
-from src.agent.config import AgentConfig
-
 
 # ── Helpers ─────────────────────────────────────────────────────
 
@@ -107,9 +106,10 @@ class TestOrchestratorInitV2:
             config = AgentConfig()
             orch = Orchestrator(config)
             assert isinstance(orch.sub_agents, dict)
-            assert "direct" in orch.sub_agents
+            assert "coder" in orch.sub_agents
 
-    def test_build_graph_has_6_nodes(self):
+    @pytest.mark.asyncio
+    async def test_build_graph_has_5_nodes(self):
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = MagicMock()
             mock_resolve.return_value = mock_model
@@ -118,8 +118,8 @@ class TestOrchestratorInitV2:
 
             config = AgentConfig()
             orch = Orchestrator(config)
-            graph = orch._build_graph()
-            assert "perceive" in graph.nodes
+            graph = await orch._build_graph()
+            assert "perceive" not in graph.nodes
             assert "plan" in graph.nodes
             assert "wait" in graph.nodes
             assert "dispatch" in graph.nodes
@@ -136,7 +136,7 @@ class TestOrchestratorRunV2:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="All OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -168,7 +168,7 @@ class TestOrchestratorRunV2:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -198,7 +198,7 @@ class TestOrchestratorRunV2:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit OK.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -249,7 +249,7 @@ class TestOrchestratorRunV2:
         with patch("src.agent.models.resolve_model") as mock_resolve:
             mock_model = AsyncMock()
             mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
+                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "coder", "task": "reply"}], "auto_approve": true}')]),
                 _mock_model_stream([_make_chunk(content="Audit: looks good.")]),
                 _mock_model_stream([_make_chunk(content="[]")]),
             ])
@@ -270,29 +270,6 @@ class TestOrchestratorRunV2:
                 audit_events = [e for e in events if e["type"] == "audit_summary"]
                 assert len(audit_events) >= 1
 
-    @pytest.mark.asyncio
-    async def test_perceive_node_preserves_context(self):
-        with patch("src.agent.models.resolve_model") as mock_resolve:
-            mock_model = AsyncMock()
-            mock_model.astream = MagicMock(side_effect=[
-                _mock_model_stream([_make_chunk(content='{"steps": [{"agent": "direct", "task": "reply"}], "auto_approve": true}')]),
-                _mock_model_stream([_make_chunk(content="OK")]),
-                _mock_model_stream([_make_chunk(content="[]")]),
-            ])
-            mock_resolve.return_value = mock_model
-
-            from src.agent.orchestrator import Orchestrator
-
-            config = AgentConfig()
-            orch = Orchestrator(config)
-
-            events = []
-            async for event in orch.run("recommend models", history=[{"role": "human", "content": ".env: provider=openai"}]):
-                events.append(event)
-
-            assert any(e["type"] == "plan" for e in events)
-
-
 # ── Interrupt / Resume Tests ────────────────────────────────────
 
 
@@ -309,10 +286,17 @@ class TestInterruptResume:
             config = AgentConfig()
             orch = Orchestrator(config)
 
-            # Mock the graph to return __interrupt__
+            # Mock the graph to simulate interrupt
             mock_graph = MagicMock()
-            mock_graph.ainvoke = AsyncMock(return_value={"__interrupt__": True, "plan": Plan(steps=[])})
-            mock_graph.nodes = {}
+            # astream returns async iterator that yields nothing
+            mock_astream_result = MagicMock()
+            mock_astream_result.__aiter__.return_value = mock_astream_result
+            mock_astream_result.__anext__.side_effect = StopAsyncIteration
+            mock_graph.astream = MagicMock(return_value=mock_astream_result)
+            mock_graph.aget_state = AsyncMock()
+            mock_state = MagicMock()
+            mock_state.next = ("wait",)
+            mock_graph.aget_state.return_value = mock_state
 
             # Trigger via _build_graph mock
             with patch.object(orch, "_build_graph", return_value=mock_graph):
@@ -346,11 +330,12 @@ class TestInterruptResume:
             mock_resolve.return_value = mock_model
 
             from src.agent.orchestrator import Orchestrator
+            from src.agent.orchestrator.core import _THREAD_CACHE
 
             config = AgentConfig()
             orch = Orchestrator(config)
             mock_graph = MagicMock()
-            orch._interrupted_threads["test-thread"] = mock_graph
+            _THREAD_CACHE["test-thread"] = {"graph": mock_graph, "config": {}}
 
             with pytest.raises(ValueError, match="Unknown decision"):
                 async for _ in orch.resume("test-thread", "invalid"):
@@ -373,7 +358,7 @@ class TestEventTypes:
         assert evt["data"]["thread_id"] == "abc"
 
     def test_orchestrator_events_re_exports_interrupt(self):
-        from src.agent.orchestrator._events import make_interrupt
+        from src.agent.events import make_interrupt
         evt = make_interrupt()
         assert evt["type"] == "interrupt"
 
@@ -393,6 +378,6 @@ class TestEventTypes:
         assert evt["data"]["req_id"] == "r1"
 
     def test_orchestrator_events_re_exports_permission_request(self):
-        from src.agent.orchestrator._events import make_permission_request
+        from src.agent.events import make_permission_request
         evt = make_permission_request()
         assert evt["type"] == "permission_request"
